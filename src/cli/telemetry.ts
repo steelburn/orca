@@ -257,6 +257,10 @@ async function sendCliFeatureUsed(
   if (!metadata) {
     return
   }
+  // authToken is required for the runtime RPC handshake; mirror readMetadata's guard.
+  if (!metadata.authToken) {
+    return
+  }
   const transport = findTransport(metadata, 'unix', 'named-pipe')
   if (!transport) {
     return

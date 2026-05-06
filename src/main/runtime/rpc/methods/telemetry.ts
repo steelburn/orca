@@ -64,8 +64,14 @@ export const TELEMETRY_METHODS: RpcMethod[] = [
           // The cast is the boundary handoff: `track()` re-validates
           // against `eventSchemas.cli_feature_used` (the single source of
           // truth) so this assignment is "I have already checked the
-          // shape, hand it to the central validator."
-          track(name, parsed.data satisfies EventProps<'cli_feature_used'>)
+          // shape, hand it to the central validator." Wrapped in
+          // try/catch so a stray internal throw never surfaces as an
+          // RPC error to the CLI — telemetry must stay best-effort.
+          try {
+            track(name, parsed.data satisfies EventProps<'cli_feature_used'>)
+          } catch {
+            /* swallow */
+          }
           return {}
         }
         default: {

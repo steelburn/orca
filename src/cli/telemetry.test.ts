@@ -138,6 +138,19 @@ describe('recordCliFeatureUsed', () => {
     })
   })
 
+  // Symmetric direction: a flaky first attempt must not be masked by a
+  // later success in the same group.
+  it('first-write-wins on exit_status (later success does not re-emit)', async () => {
+    recordCliFeatureUsed(['snapshot'], 'failure')
+    recordCliFeatureUsed(['screenshot'], 'success') // same group: browser_observation
+    await flush()
+    expect(senderCalls).toHaveLength(1)
+    expect(senderCalls[0].body.params).toEqual({
+      name: 'cli_feature_used',
+      props: { feature_group: 'browser_observation', exit_status: 'failure' }
+    })
+  })
+
   it('emits separate events for distinct groups', async () => {
     recordCliFeatureUsed(['snapshot'], 'success')
     recordCliFeatureUsed(['click'], 'success')
