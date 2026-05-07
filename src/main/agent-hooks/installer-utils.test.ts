@@ -9,10 +9,9 @@ import {
   writeFileSync,
   chmodSync
 } from 'fs'
-import { tmpdir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { join } from 'path'
 import { spawnSync } from 'child_process'
-import { homedir } from 'os'
 import {
   createManagedCommandMatcher,
   getSharedManagedScriptPath,
@@ -180,7 +179,7 @@ describe('createManagedCommandMatcher', () => {
 describe('getSharedManagedScriptPath', () => {
   it("returns ~/.orca/agent-hooks/<scriptFileName> rooted at the user's home", () => {
     expect(getSharedManagedScriptPath('claude-hook.sh')).toBe(
-      `${homedir()}/.orca/agent-hooks/claude-hook.sh`
+      join(homedir(), '.orca', 'agent-hooks', 'claude-hook.sh')
     )
   })
 

@@ -114,18 +114,45 @@ export function removeManagedCommands(
   })
 }
 
+// Why: temp+rename so concurrent Orca instances writing this shared path can't
+// produce a torn script that an in-flight `/bin/sh <scriptPath>` would source.
 export function writeManagedScript(scriptPath: string, content: string): void {
-  mkdirSync(dirname(scriptPath), { recursive: true })
-  writeScriptWithAclRetry(scriptPath, content)
-  if (process.platform !== 'win32') {
-    chmodSync(scriptPath, 0o755)
+  const dir = dirname(scriptPath)
+  mkdirSync(dir, { recursive: true })
+
+  if (existsSync(scriptPath)) {
+    try {
+      if (readFileSync(scriptPath, 'utf-8') === content) {
+        return
+      }
+    } catch {
+      // Fall through to the atomic write path.
+    }
+  }
+
+  const tmpPath = join(dir, `.${Date.now()}-${randomUUID()}.tmp`)
+  try {
+    writeScriptWithAclRetry(tmpPath, content)
+    // Why: chmod before rename so the canonical path is never visible in a
+    // non-executable state — wrapPosixHookCommand's `[ -x ]` guard would
+    // silently skip the hook in that window.
+    if (process.platform !== 'win32') {
+      chmodSync(tmpPath, 0o755)
+    }
+    renameSync(tmpPath, scriptPath)
+  } finally {
+    if (existsSync(tmpPath)) {
+      try {
+        unlinkSync(tmpPath)
+      } catch {
+        // best effort
+      }
+    }
   }
 }
 
-// Why: on Windows, Chromium's renderer initialization can reset the DACL on
-// the userData directory (Protected DACL without OI+CI propagation), leaving
-// child directories like agent-hooks with an empty DACL. Grant an explicit
-// directory ACL on EPERM and retry once.
+// Why: on Windows, write may fail with EPERM if the target directory has a
+// restrictive DACL. Grant an explicit ACL on EPERM and retry once.
 function writeScriptWithAclRetry(scriptPath: string, content: string): void {
   try {
     writeFileSync(scriptPath, content, 'utf-8')
