@@ -8,6 +8,7 @@ import {
   renameSync,
   unlinkSync
 } from 'fs'
+import { homedir } from 'os'
 import { dirname, join } from 'path'
 import { randomUUID } from 'crypto'
 import { grantDirAcl, isPermissionError } from '../win32-utils'
@@ -63,6 +64,20 @@ export function createManagedCommandMatcher(
     }
     return command.replaceAll('\\', '/').includes(needle)
   }
+}
+
+// Why: managed hook scripts live at a deterministic shared path so every Orca
+// instance (prod, dev, parallel build) writes the *same* JSON entry into
+// ~/.claude/settings.json (and the codex/cursor/gemini equivalents) instead of
+// each instance pointing the entry at its own <userData>/agent-hooks/ — which
+// caused multi-instance thrash where the last instance to install() wins, and
+// any other instance whose userData was wiped or moved leaves a stale entry
+// that fires `/bin/sh "<missing>"` on every tool call. The script body is
+// identical across versions (it just sources the per-PTY env var
+// ORCA_AGENT_HOOK_ENDPOINT to find the live port/token), so two installs
+// rewriting the same path is a no-op rather than a conflict.
+export function getSharedManagedScriptPath(scriptFileName: string): string {
+  return join(homedir(), '.orca', 'agent-hooks', scriptFileName)
 }
 
 // Why: a stale managed hook entry (left over after the user wiped userData,

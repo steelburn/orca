@@ -12,8 +12,10 @@ import {
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { spawnSync } from 'child_process'
+import { homedir } from 'os'
 import {
   createManagedCommandMatcher,
+  getSharedManagedScriptPath,
   wrapPosixHookCommand,
   writeHooksJson,
   type HooksConfig
@@ -159,6 +161,37 @@ describe('createManagedCommandMatcher', () => {
         'if [ -x "/Users/alice/Library/Application Support/Orca/agent-hooks/claude-hook.sh" ]; then /bin/sh "/Users/alice/Library/Application Support/Orca/agent-hooks/claude-hook.sh"; fi'
       )
     ).toBe(true)
+  })
+
+  it('matches the legacy per-userData script path AND the new shared ~/.orca path', () => {
+    // Why: this guarantees migration is automatic on next install(). When an
+    // older Orca instance had written `<userData>/agent-hooks/claude-hook.sh`
+    // into settings.json, the next install() must recognize that entry as
+    // managed and replace it with the new `~/.orca/agent-hooks/claude-hook.sh`
+    // entry — without leaving the dead pointer behind to fire exit 127 on
+    // every tool call.
+    expect(
+      match("/bin/sh '/Users/alice/Library/Application Support/orca/agent-hooks/claude-hook.sh'")
+    ).toBe(true)
+    expect(match("/bin/sh '/Users/alice/.orca/agent-hooks/claude-hook.sh'")).toBe(true)
+  })
+})
+
+describe('getSharedManagedScriptPath', () => {
+  it("returns ~/.orca/agent-hooks/<scriptFileName> rooted at the user's home", () => {
+    expect(getSharedManagedScriptPath('claude-hook.sh')).toBe(
+      `${homedir()}/.orca/agent-hooks/claude-hook.sh`
+    )
+  })
+
+  it('does not depend on Electron app.getPath, so two Orca instances resolve to the same path', () => {
+    // Why: the whole point of the shared path is that prod and any dev build
+    // produce the same string regardless of which userData they boot with.
+    // If this resolver ever drifted to be per-instance, the multi-instance
+    // settings.json thrash would silently come back.
+    const a = getSharedManagedScriptPath('claude-hook.sh')
+    const b = getSharedManagedScriptPath('claude-hook.sh')
+    expect(a).toBe(b)
   })
 })
 
