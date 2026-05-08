@@ -1207,15 +1207,15 @@ export type GlobalSettings = {
    *  detection, so no visible behavior change. Then we flip this flag to true
    *  and never migrate again. */
   terminalMacOptionAsAltMigrated: boolean
-  /** Experimental: live agent activity — inline per-workspace-card agent
-   *  rows showing state, prompt, and last message, plus retention of "done"
-   *  rows and the hook-driven status slice that feeds them. Opt-in because
-   *  the surface is still in preview: managed hook installation
-   *  (Claude/Codex/Gemini) only runs when this is true, so toggling it on
-   *  takes effect on the next app launch. The in-pane status indicators and
-   *  the cursor-agent hook path are unaffected by this toggle. */
-  experimentalAgentDashboard: boolean
   experimentalMobile: boolean
+  /** Auto-restore window for a phone-fit PTY after the last mobile
+   *  subscriber leaves. `null` (default) holds the PTY at phone size
+   *  indefinitely; the desktop "Restore" banner remains the explicit
+   *  return-to-desktop-size action. A finite millisecond value schedules
+   *  an automatic restore that long after the last unsubscribe. Clamped
+   *  on read into [5_000ms, 60min] to defend against bad config.
+   *  See docs/mobile-fit-hold.md. */
+  mobileAutoRestoreFitMs: number | null
   /** Experimental: floating animated sidekick (claude.webp) in the bottom-right
    *  corner. Opt-in because it's a cosmetic joke feature; users who leave it
    *  off never mount the overlay. Toggling takes effect immediately in the
@@ -1373,7 +1373,9 @@ export type PersistedUIState = {
   /** URL to navigate to when a new browser tab is opened. Null means blank tab.
    *  Phase 3 will expand this to a full BrowserSessionProfile per workspace. */
   browserDefaultUrl?: string | null
-  browserDefaultSearchEngine?: 'google' | 'duckduckgo' | 'bing' | null
+  browserDefaultSearchEngine?: 'google' | 'duckduckgo' | 'bing' | 'kagi' | null
+  /** Optional Kagi private-session link used only when Kagi is the search engine. */
+  browserKagiSessionLink?: string | null
   /** Saved window bounds so the app restores to the user's last position/size
    *  instead of maximizing on every launch. */
   windowBounds?: { x: number; y: number; width: number; height: number } | null
@@ -1385,15 +1387,23 @@ export type PersistedUIState = {
    *  migration never re-fires — allowing users to intentionally select the
    *  new 'recent' (last-activity) sort without it being clobbered on restart. */
   _sortBySmartMigrated?: boolean
-  /** One-shot migration flag for the inline-agents view-mode rollout. The
-   *  'inline-agents' card property was introduced after the
-   *  experimentalAgentDashboard toggle — users on prior rcs who had the
-   *  toggle on already had `worktreeCardProperties` persisted without it,
-   *  so merging with the new defaults never added it for them. When this
-   *  flag is absent, the main-process load() appends 'inline-agents' to
-   *  the persisted array if experimentalAgentDashboard is true, then sets
-   *  the flag so a later uncheck from the view-options menu sticks. */
+  /** LEGACY one-shot flag from the experimental-toggle era of the inline
+   *  agents feature. It was stamped unconditionally on every successful
+   *  load() in prior builds (regardless of whether the experiment was on),
+   *  so it cannot be used to detect "already migrated under the new
+   *  default-on rules" — every prior-RC user already has it set to true on
+   *  disk. Kept persisted for forward-compat with rollback to a pre-default-on
+   *  build that still reads it; the actual migration gate is now
+   *  `_inlineAgentsDefaultedForAllUsers` below. */
   _inlineAgentsDefaultedForExperiment?: boolean
+  /** One-shot migration flag for the default-on rollout of the inline
+   *  agents feature. Set once on first load after upgrade once the
+   *  'inline-agents' card property has been ensured in
+   *  `worktreeCardProperties`. Distinct from
+   *  `_inlineAgentsDefaultedForExperiment` because that legacy flag was
+   *  stamped on every prior load and so is permanently dirty for the
+   *  prior-RC opt-out cohort the widened migration is meant to reach. */
+  _inlineAgentsDefaultedForAllUsers?: boolean
   /** Snapshot of totalAgentsSpawned captured the first time we see the current
    *  app version. Why: the nag threshold counts agents spawned *since the
    *  user's last update* so a fresh install or new release does not trigger
@@ -1586,6 +1596,19 @@ export type GitStatusEntry = GitUncommittedEntry
 export type GitStatusResult = {
   entries: GitStatusEntry[]
   conflictOperation: GitConflictOperation
+  head?: string
+  branch?: string
+}
+
+// Why: when hasUpstream is false, ahead/behind are placeholder zeros, not a
+// "sync" signal — callers must check hasUpstream before treating 0/0 as in-sync.
+// Kept separate from GitStatusResult because upstream lookup can fail for
+// reasons unrelated to working-tree status (e.g., no upstream is expected).
+export type GitUpstreamStatus = {
+  hasUpstream: boolean
+  upstreamName?: string
+  ahead: number
+  behind: number
 }
 
 export type GitBranchChangeStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'copied'

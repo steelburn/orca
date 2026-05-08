@@ -29,7 +29,11 @@ import { useTerminalPaneLifecycle } from './use-terminal-pane-lifecycle'
 import { useTerminalPaneContextMenu } from './use-terminal-pane-context-menu'
 import { useNotificationDispatch } from './use-notification-dispatch'
 import { connectPanePty } from './pty-connection'
-import { getPaneIdsForPty, onOverrideChange } from '@/lib/pane-manager/mobile-fit-overrides'
+import {
+  getFitOverrideForPty,
+  getPaneIdsForPty,
+  onOverrideChange
+} from '@/lib/pane-manager/mobile-fit-overrides'
 import { getDriverForPty, onDriverChange } from '@/lib/pane-manager/mobile-driver-state'
 import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
 
@@ -37,6 +41,7 @@ import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
 // without re-entering the `slice → TerminalPane → store → slice` cycle
 // that otherwise leaves createTerminalSlice undefined at store-init time.
 import { shutdownBufferCaptures } from './shutdown-buffer-captures'
+import { mergeCapturedLeafState } from './merge-captured-leaf-state'
 
 const MAX_BUFFER_BYTES = 512 * 1024
 
@@ -75,7 +80,6 @@ export default function TerminalPane({
   const paneMode2031Ref = useRef<Map<number, boolean>>(new Map())
   const paneLastThemeModeRef = useRef<Map<number, 'dark' | 'light'>>(new Map())
   const panePtyBindingsRef = useRef<Map<number, IDisposable>>(new Map())
-  const pendingWritesRef = useRef<Map<number, string>>(new Map())
   // Why: tracks panes currently replaying recorded PTY bytes into xterm
   // (cold-restore, daemon snapshot, scrollback restore, eager-buffer flush).
   // While non-zero, pty-connection.ts drops xterm onData so auto-replies to
@@ -152,6 +156,17 @@ export default function TerminalPane({
             for (const paneId of paneIds) {
               const pane = manager.getPanes().find((p) => p.id === paneId)
               if (!pane) {
+                continue
+              }
+              // Why: skip the fallback for hidden/unmounted panes whose
+              // container is 0×0. Force-resizing xterm to the server's
+              // desktop dims while the DOM has no geometry leaves xterm
+              // with cols/rows that won't match when the tab is later
+              // activated (the activation refit will correct it). The
+              // fallback is for the *visible* pane that legitimately
+              // failed to refit via the rAF safeFit.
+              const rect = pane.container.getBoundingClientRect()
+              if (rect.width === 0 || rect.height === 0) {
                 continue
               }
               safeFit(pane)
@@ -284,39 +299,42 @@ export default function TerminalPane({
     }
     const activePaneId = manager.getActivePane()?.id ?? manager.getPanes()[0]?.id ?? null
     const layout = serializeTerminalLayout(container, activePaneId, expandedPaneIdRef.current)
-    // Preserve existing buffersByLeafId so layout-only persists (resize, split,
-    // reorder) don't clobber previously captured scrollback.
     const existing = useAppStore.getState().terminalLayoutsByTabId[tabId]
-    if (existing?.buffersByLeafId) {
-      const currentLeafIds = new Set(manager.getPanes().map((p) => paneLeafId(p.id)))
-      layout.buffersByLeafId = Object.fromEntries(
-        Object.entries(existing.buffersByLeafId).filter(([id]) => currentLeafIds.has(id))
-      )
+    const currentPanes = manager.getPanes()
+    const currentLeafIds = new Set(currentPanes.map((p) => paneLeafId(p.id)))
+    // Preserve existing buffersByLeafId so layout-only persists (resize, split,
+    // reorder) don't clobber previously captured scrollback. Drop entries for
+    // leaves that no longer exist.
+    const mergedBuffers = mergeCapturedLeafState({
+      prior: existing?.buffersByLeafId,
+      fresh: {},
+      currentLeafIds
+    })
+    if (Object.keys(mergedBuffers).length > 0) {
+      layout.buffersByLeafId = mergedBuffers
     }
     // Why: between pane creation and the deferred rAF where PTYs actually
-    // attach, all transports have getPtyId() === null. If persistLayoutSnapshot
-    // fires during that window the live-transport block below finds no entries,
-    // so this block preserves the *prior* snapshot's leaf→PTY mappings. Without
-    // it, a rapid successive remount (tab moved again before the first rAF)
-    // would lose the mappings and force fresh PTY spawns.
-    if (existing?.ptyIdsByLeafId) {
-      const currentLeafIds = new Set(manager.getPanes().map((p) => paneLeafId(p.id)))
-      layout.ptyIdsByLeafId = Object.fromEntries(
-        Object.entries(existing.ptyIdsByLeafId).filter(([id]) => currentLeafIds.has(id))
-      )
-    }
-    // Preserve pane titles — uses the live React state (via ref) rather than
-    // the stale Zustand value because React state reflects in-flight title
-    // edits that haven't been persisted yet.
-    const currentPanes = manager.getPanes()
-    const ptyEntries = currentPanes
+    // attach, all transports have getPtyId() === null. The merge below
+    // preserves the *prior* snapshot's leaf→PTY mappings while still letting
+    // any live transports overwrite them. Without preservation, a rapid
+    // successive remount (tab moved again before the first rAF) would lose
+    // the mappings and force fresh PTY spawns.
+    const livePtyEntries = currentPanes
       .map(
         (p) => [paneLeafId(p.id), paneTransportsRef.current.get(p.id)?.getPtyId() ?? null] as const
       )
       .filter((entry): entry is readonly [string, string] => entry[1] !== null)
-    if (ptyEntries.length > 0) {
-      layout.ptyIdsByLeafId = Object.fromEntries(ptyEntries)
+    const mergedPtyIds = mergeCapturedLeafState({
+      prior: existing?.ptyIdsByLeafId,
+      fresh: Object.fromEntries(livePtyEntries),
+      currentLeafIds
+    })
+    if (Object.keys(mergedPtyIds).length > 0) {
+      layout.ptyIdsByLeafId = mergedPtyIds
     }
+    // Preserve pane titles — uses the live React state (via ref) rather than
+    // the stale Zustand value because React state reflects in-flight title
+    // edits that haven't been persisted yet.
     const titles = paneTitlesRef.current
     const titleEntries = currentPanes
       .filter((p) => titles[p.id])
@@ -464,7 +482,6 @@ export default function TerminalPane({
     paneMode2031Ref,
     paneLastThemeModeRef,
     panePtyBindingsRef,
-    pendingWritesRef,
     replayingPanesRef,
     isActiveRef,
     isVisibleRef,
@@ -530,7 +547,6 @@ export default function TerminalPane({
         cwd,
         startup: { command: 'codex' },
         paneTransportsRef,
-        pendingWritesRef,
         replayingPanesRef,
         isActiveRef,
         isVisibleRef,
@@ -630,7 +646,6 @@ export default function TerminalPane({
     managerRef,
     containerRef,
     paneTransportsRef,
-    pendingWritesRef,
     isActiveRef,
     isVisibleRef,
     toggleExpandPane
@@ -819,15 +834,9 @@ export default function TerminalPane({
       if (panes.length === 0) {
         return
       }
-      // Flush pending background PTY output into terminals before serializing.
-      // terminal.write() is async so some trailing bytes may be lost — best effort.
-      for (const pane of panes) {
-        const pending = pendingWritesRef.current.get(pane.id)
-        if (pending) {
-          pane.terminal.write(pending)
-          pendingWritesRef.current.set(pane.id, '')
-        }
-      }
+      // No renderer-side pending writes to flush — PTY output writes live
+      // into xterm regardless of visibility, so the SerializeAddon already
+      // sees the freshest possible state at this point.
       const buffers: Record<string, string> = {}
       for (const pane of panes) {
         try {
@@ -860,9 +869,14 @@ export default function TerminalPane({
       }
       const activePaneId = manager.getActivePane()?.id ?? panes[0]?.id ?? null
       const layout = serializeTerminalLayout(container, activePaneId, expandedPaneIdRef.current)
-      if (Object.keys(buffers).length > 0) {
-        layout.buffersByLeafId = buffers
-      }
+      // Why: setTabLayout REPLACES — it doesn't merge. captureBuffers can
+      // run during a transient window (post-remount, just-attached,
+      // mid-replay) where xterm hasn't rendered yet so serialize returns 0
+      // bytes. Without preservation, that empty pass would wipe a known-good
+      // buffer. Merge prior state in for leaves whose live capture came back
+      // empty. Same shape as persistLayoutSnapshot.
+      const existing = useAppStore.getState().terminalLayoutsByTabId[tabId]
+      const currentLeafIds = new Set(panes.map((p) => paneLeafId(p.id)))
       const ptyEntries = panes
         .map(
           (pane) =>
@@ -872,8 +886,21 @@ export default function TerminalPane({
             ] as const
         )
         .filter((entry): entry is readonly [string, string] => entry[1] !== null)
-      if (ptyEntries.length > 0) {
-        layout.ptyIdsByLeafId = Object.fromEntries(ptyEntries)
+      const mergedBuffers = mergeCapturedLeafState({
+        prior: existing?.buffersByLeafId,
+        fresh: buffers,
+        currentLeafIds
+      })
+      const mergedPtyIds = mergeCapturedLeafState({
+        prior: existing?.ptyIdsByLeafId,
+        fresh: Object.fromEntries(ptyEntries),
+        currentLeafIds
+      })
+      if (Object.keys(mergedBuffers).length > 0) {
+        layout.buffersByLeafId = mergedBuffers
+      }
+      if (Object.keys(mergedPtyIds).length > 0) {
+        layout.ptyIdsByLeafId = mergedPtyIds
       }
       // Merge pane titles so the shutdown snapshot doesn't silently drop them.
       // Why: the old early-return on empty buffers skipped this entirely, which
@@ -1145,14 +1172,16 @@ export default function TerminalPane({
         if (!ptyId) {
           return null
         }
-        // Why: presence-lock — banner is gated on driver state, not on
-        // fit-override. The banner now communicates "input is paused"
-        // (the load-bearing fact) instead of dimensional state. The
-        // dimensional override may still be active and is reflected in
-        // the PTY but not in the banner copy. See
-        // docs/mobile-presence-lock.md.
+        // Why: two-state banner. (1) Driver is mobile → presence-lock,
+        // input paused (docs/mobile-presence-lock.md). (2) No mobile
+        // driver but a phone-fit override is still in place → indefinite
+        // hold (docs/mobile-fit-hold.md): the user left mobile, the PTY
+        // is held at phone dims, and the banner is the explicit
+        // return-to-desktop-size escape hatch.
         const driver = getDriverForPty(ptyId)
-        if (driver.kind !== 'mobile') {
+        const isMobileDriving = driver.kind === 'mobile'
+        const isHeldAtPhoneFit = !isMobileDriving && getFitOverrideForPty(ptyId) !== null
+        if (!isMobileDriving && !isHeldAtPhoneFit) {
           return null
         }
         return createPortal(
@@ -1175,7 +1204,9 @@ export default function TerminalPane({
             }}
           >
             <span>
-              Mobile is driving this terminal — your input is paused. Click Take back to resume.
+              {isMobileDriving
+                ? 'Mobile is driving this terminal — your input is paused. Click Take back to resume.'
+                : 'This terminal is held at phone size for the mobile app. Click Restore to return it to desktop size.'}
             </span>
             <button
               style={{
@@ -1190,15 +1221,15 @@ export default function TerminalPane({
               onClick={() => {
                 const ptyId = paneTransportsRef.current.get(pane.id)?.getPtyId()
                 if (ptyId) {
-                  // Why: same IPC route — handler now also reclaims the
-                  // input floor for the desktop via the driver state
-                  // machine, so the banner unmounts and input is unblocked
-                  // until the next mobile interaction.
+                  // Why: same IPC route — handler resolves both the
+                  // active-mobile-subscriber path and the held-no-subscriber
+                  // path (docs/mobile-fit-hold.md), so the banner unmounts
+                  // and the PTY returns to desktop dims in either case.
                   void window.api.runtime.restoreTerminalFit(ptyId)
                 }
               }}
             >
-              Take back
+              {isMobileDriving ? 'Take back' : 'Restore'}
             </button>
           </div>,
           pane.container,

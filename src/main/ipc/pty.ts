@@ -434,6 +434,7 @@ export function registerPtyHandlers(
   ipcMain.removeHandler('pty:clearPendingPaneSerializer')
   ipcMain.removeAllListeners('pty:write')
   ipcMain.removeAllListeners('pty:ackColdRestore')
+  ipcMain.removeAllListeners('pty:serializeBuffer:response')
 
   // Configure the local provider with app-specific hooks.
   // Why: only LocalPtyProvider has the configure() method — daemon-backed
@@ -555,64 +556,80 @@ export function registerPtyHandlers(
   bindProviderListeners()
   rebindProviderListeners = bindProviderListeners
 
+  // Why: a persistent ipcMain listener with a request-ID dispatch table
+  // (instead of one listener per call) so concurrent serialize requests do
+  // not stack listeners and trip Node's MaxListeners=10 warning. Many
+  // sleeping PTYs waking at once (e.g. on relaunch) routinely fan out 10+
+  // concurrent calls.
+  type SerializeResult = { data: string; cols: number; rows: number; lastTitle?: string } | null
+  const pendingSerializeRequests = new Map<
+    string,
+    { resolve: (result: SerializeResult) => void; timeout: NodeJS.Timeout }
+  >()
+
+  function settleSerializeRequest(requestId: string, result: SerializeResult): void {
+    const pending = pendingSerializeRequests.get(requestId)
+    if (!pending) {
+      return
+    }
+    clearTimeout(pending.timeout)
+    pendingSerializeRequests.delete(requestId)
+    pending.resolve(result)
+  }
+
+  ipcMain.on(
+    'pty:serializeBuffer:response',
+    (
+      _event,
+      args: {
+        requestId?: string
+        snapshot?: {
+          data?: unknown
+          cols?: unknown
+          rows?: unknown
+          lastTitle?: unknown
+        } | null
+      }
+    ) => {
+      if (typeof args?.requestId !== 'string') {
+        return
+      }
+      const snapshot = args.snapshot
+      if (
+        snapshot &&
+        typeof snapshot.data === 'string' &&
+        typeof snapshot.cols === 'number' &&
+        typeof snapshot.rows === 'number'
+      ) {
+        const result: { data: string; cols: number; rows: number; lastTitle?: string } = {
+          data: snapshot.data,
+          cols: snapshot.cols,
+          rows: snapshot.rows
+        }
+        if (typeof snapshot.lastTitle === 'string' && snapshot.lastTitle.length > 0) {
+          result.lastTitle = snapshot.lastTitle
+        }
+        settleSerializeRequest(args.requestId, result)
+      } else {
+        settleSerializeRequest(args.requestId, null)
+      }
+    }
+  )
+
   function requestSerializedBuffer(
     ptyId: string,
     opts?: { scrollbackRows?: number; altScreenForcesZeroRows?: boolean }
-  ): Promise<{ data: string; cols: number; rows: number; lastTitle?: string } | null> {
+  ): Promise<SerializeResult> {
     if (mainWindow.isDestroyed()) {
       return Promise.resolve(null)
     }
 
     const requestId = randomUUID()
-    return new Promise((resolve) => {
-      const cleanup = (): void => {
-        clearTimeout(timeout)
-        ipcMain.removeListener('pty:serializeBuffer:response', onResponse)
-      }
-
+    return new Promise<SerializeResult>((resolve) => {
       const timeout = setTimeout(() => {
-        cleanup()
-        resolve(null)
+        settleSerializeRequest(requestId, null)
       }, 750)
-
-      const onResponse = (
-        _event: Electron.IpcMainEvent,
-        args: {
-          requestId?: string
-          snapshot?: {
-            data?: unknown
-            cols?: unknown
-            rows?: unknown
-            lastTitle?: unknown
-          } | null
-        }
-      ): void => {
-        if (args.requestId !== requestId) {
-          return
-        }
-        cleanup()
-        const snapshot = args.snapshot
-        if (
-          snapshot &&
-          typeof snapshot.data === 'string' &&
-          typeof snapshot.cols === 'number' &&
-          typeof snapshot.rows === 'number'
-        ) {
-          const result: { data: string; cols: number; rows: number; lastTitle?: string } = {
-            data: snapshot.data,
-            cols: snapshot.cols,
-            rows: snapshot.rows
-          }
-          if (typeof snapshot.lastTitle === 'string' && snapshot.lastTitle.length > 0) {
-            result.lastTitle = snapshot.lastTitle
-          }
-          resolve(result)
-        } else {
-          resolve(null)
-        }
-      }
-
-      ipcMain.on('pty:serializeBuffer:response', onResponse)
+      pendingSerializeRequests.set(requestId, { resolve, timeout })
       const payload: {
         requestId: string
         ptyId: string
@@ -1135,6 +1152,26 @@ export function registerPtyHandlers(
     getProviderForPty(args.id).resize(args.id, args.cols, args.rows)
     runtime?.onExternalPtyResize(args.id, args.cols, args.rows)
   })
+
+  // Why: pty:reportGeometry is a measurement-only sibling of pty:resize.
+  // pty:resize means "I want the PTY at this size" (a write/intent — gated
+  // by mobile-driver and cascade suppress). pty:reportGeometry means "the
+  // desktop pane I'm rendering currently measures this many cells" (a
+  // read/observation). Mobile-fit hold needs the latter even while the
+  // former is intentionally blocked: when a previously-hidden desktop
+  // tab becomes visible while a phone is driving, the server has no way
+  // to learn the real desktop dims, and resolveDesktopRestoreTarget
+  // returns the stale spawn default (e.g. 80×24) on Take Back. Splitting
+  // the channels keeps each guard simple — pty:resize keeps its mobile-
+  // driver gate; pty:reportGeometry never resizes the PTY, only refreshes
+  // the restore-target cache. See docs/mobile-fit-hold.md.
+  ipcMain.removeAllListeners('pty:reportGeometry')
+  ipcMain.on(
+    'pty:reportGeometry',
+    (_event, args: { id: string; cols: number; rows: number }) => {
+      runtime?.recordRendererGeometry(args.id, args.cols, args.rows)
+    }
+  )
 
   // Why: fire-and-forget — clears the DaemonPtyAdapter's sticky cold restore
   // cache after the renderer has consumed the data. No-op for non-daemon providers.

@@ -8,7 +8,7 @@ import type { Store } from '../persistence'
 import type { Repo, BaseRefDefaultResult, SparsePreset } from '../../shared/types'
 import { isFolderRepo } from '../../shared/repo-kind'
 import { REPO_COLORS } from '../../shared/constants'
-import { rebuildAuthorizedRootsCache } from './filesystem-auth'
+import { invalidateAuthorizedRootsCache } from './filesystem-auth'
 import type { ChildProcess } from 'child_process'
 import { access, mkdir, readdir, rm } from 'fs/promises'
 import { gitExecFileAsync, gitSpawn } from '../git/runner'
@@ -112,7 +112,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       }
 
       store.addRepo(repo)
-      await rebuildAuthorizedRootsCache(store)
+      invalidateAuthorizedRootsCache()
       notifyReposChanged(mainWindow)
       emitRepoAdded('folder_picker', false)
       return { repo }
@@ -410,7 +410,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       }
 
       store.addRepo(repo)
-      await rebuildAuthorizedRootsCache(store)
+      invalidateAuthorizedRootsCache()
       notifyReposChanged(mainWindow)
       emitRepoAdded('folder_picker', false)
       return { repo }
@@ -419,7 +419,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
 
   ipcMain.handle('repos:remove', async (_event, args: { repoId: string }) => {
     store.removeRepo(args.repoId)
-    await rebuildAuthorizedRootsCache(store)
+    invalidateAuthorizedRootsCache()
     notifyReposChanged(mainWindow)
   })
 
@@ -671,7 +671,7 @@ export function registerRepoHandlers(mainWindow: BrowserWindow, store: Store): v
       }
 
       store.addRepo(repo)
-      await rebuildAuthorizedRootsCache(store)
+      invalidateAuthorizedRootsCache()
       notifyReposChanged(mainWindow)
       emitRepoAdded('clone_url', false)
       return repo

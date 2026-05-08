@@ -20,6 +20,7 @@ import type {
   GitConflictOperation,
   GitDiffResult,
   GitStatusResult,
+  GitUpstreamStatus,
   GitHubAssignableUser,
   GitHubPRFile,
   GitHubPRFileContents,
@@ -184,6 +185,9 @@ export type BrowserApi = {
     callback: (event: { browserPageId: string; url: string; title: string }) => void
   ) => () => void
   onActivateView: (callback: (data: { worktreeId: string }) => void) => () => void
+  onPaneFocus: (
+    callback: (data: { worktreeId: string | null; browserPageId: string }) => void
+  ) => () => void
   onOpenLinkInOrcaTab: (
     callback: (event: { browserPageId: string; url: string }) => void
   ) => () => void
@@ -341,17 +345,10 @@ export type CodexUsageApi = {
   }) => Promise<CodexUsageSessionRow[]>
 }
 
-export type AppRuntimeFlags = {
-  agentDashboardEnabledAtStartup: boolean
-}
-
 export type AppApi = {
-  /** Returns flags about the main-process state that was set at startup.
-   *  The renderer uses this to show a "restart required" banner when the user
-   *  toggles a setting that only applies across a full relaunch. */
-  getRuntimeFlags: () => Promise<AppRuntimeFlags>
   /** Relaunches the app via Electron's app.relaunch() + app.exit(0). Used
-   *  by the "Restart now" button on the Experimental settings pane. */
+   *  by settings panes that need a full restart to apply changes (e.g. the
+   *  terminal-window blur setting in TerminalWindowSection). */
   relaunch: () => Promise<void>
   /** Returns the macOS `AppleCurrentKeyboardLayoutInputSourceID` when
    *  available (e.g. `com.apple.keylayout.PolishPro`). Used by the
@@ -474,6 +471,7 @@ export type PreloadApi = {
     }>
     write: (id: string, data: string) => void
     resize: (id: string, cols: number, rows: number) => void
+    reportGeometry: (id: string, cols: number, rows: number) => void
     signal: (id: string, signal: string) => void
     kill: (id: string, opts?: { keepHistory?: boolean }) => Promise<void>
     ackColdRestore: (id: string) => void
@@ -503,6 +501,7 @@ export type PreloadApi = {
   feedback: {
     submit: (args: {
       feedback: string
+      submitAnonymously?: boolean
       githubLogin: string | null
       githubEmail: string | null
     }) => Promise<{ ok: true } | { ok: false; status: number | null; error: string }>
@@ -915,6 +914,17 @@ export type PreloadApi = {
       baseRef: string
       connectionId?: string
     }) => Promise<GitBranchCompareResult>
+    upstreamStatus: (args: {
+      worktreePath: string
+      connectionId?: string
+    }) => Promise<GitUpstreamStatus>
+    fetch: (args: { worktreePath: string; connectionId?: string }) => Promise<void>
+    push: (args: {
+      worktreePath: string
+      publish?: boolean
+      connectionId?: string
+    }) => Promise<void>
+    pull: (args: { worktreePath: string; connectionId?: string }) => Promise<void>
     branchDiff: (args: {
       worktreePath: string
       compare: {
@@ -1064,6 +1074,11 @@ export type PreloadApi = {
     syncTrafficLights: (zoomFactor: number) => void
     setMarkdownEditorFocused: (focused: boolean) => void
     onFullscreenChanged: (callback: (isFullScreen: boolean) => void) => () => void
+    minimize: () => void
+    maximize: () => void
+    onMaximizeChanged: (callback: (isMaximized: boolean) => void) => () => void
+    requestClose: () => void
+    popupMenu: () => void
     onWindowCloseRequested: (callback: (data: { isQuitting: boolean }) => void) => () => void
     confirmWindowClose: () => void
   }
