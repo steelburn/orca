@@ -4,12 +4,27 @@ import { WebView } from 'react-native-webview'
 import type { WebViewMessageEvent } from 'react-native-webview'
 import { colors } from '../theme/mobile-theme'
 
+export type TerminalModes = {
+  bracketedPasteMode: boolean
+  altScreen: boolean
+}
+
+export type TerminalSelectionEvents = {
+  onSelectionMode?: (active: boolean) => void
+  onSelectionCopy?: (text: string) => void
+  onSelectionEvicted?: () => void
+  onModesChanged?: (modes: TerminalModes) => void
+  onHaptic?: (kind: 'selection' | 'success' | 'error' | 'edge-bump') => void
+}
+
 export type TerminalWebViewHandle = {
   write: (data: string) => void
   init: (cols: number, rows: number, initialData?: string) => void
   clear: () => void
   measureFitDimensions: (containerHeight?: number) => Promise<{ cols: number; rows: number } | null>
   resetZoom: () => void
+  cancelSelect: () => void
+  doSelectAll: () => void
   // Why: lets callers await the WebView-side `init` rAF chain (term.open
   // → renderService population → first paint) so a follow-up measure
   // doesn't race ahead and find term=null or cellWidth=0. Resolves on
@@ -20,7 +35,7 @@ export type TerminalWebViewHandle = {
 type Props = {
   style?: StyleProp<ViewStyle>
   onWebReady?: () => void
-}
+} & TerminalSelectionEvents
 
 type TerminalMessage =
   | { type: 'write'; id?: number; data: string }
@@ -28,6 +43,8 @@ type TerminalMessage =
   | { type: 'clear'; id?: number }
   | { type: 'measure'; id?: number; containerHeight?: number }
   | { type: 'reset-zoom'; id?: number }
+  | { type: 'cancel-select'; id?: number }
+  | { type: 'do-select-all'; id?: number }
 
 // Why: TUI apps (Claude Code / Ink) emit escape codes with absolute cursor
 // positioning designed for the desktop's terminal dimensions (~150+ cols).
@@ -63,11 +80,89 @@ const XTERM_HTML = `<!DOCTYPE html>
     display: inline-block;
   }
   .xterm { -webkit-user-select: none; user-select: none; }
+  /* Why: selection overlay sits in unscaled viewport coords, above the
+     transformed surface, so handle hit areas and Copy menu positions
+     don't depend on getTotalScale() for their on-screen size. */
+  #selection-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    pointer-events: none;
+    z-index: 10;
+    display: none;
+  }
+  #selection-overlay.active { display: block; }
+  .sel-handle {
+    position: absolute;
+    width: 44px; height: 44px;
+    margin-left: -22px; margin-top: -22px;
+    pointer-events: auto;
+    background: transparent;
+  }
+  .sel-handle::before {
+    content: '';
+    position: absolute;
+    left: 50%; top: 22px;
+    transform: translateX(-50%);
+    width: 14px; height: 14px;
+    background: #7aa2f7;
+    border-radius: 50%;
+    border: 2px solid #c0caf5;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  }
+  .sel-handle.start::before { top: 8px; }
+  .sel-handle.start::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 22px;
+    transform: translateX(-50%);
+    width: 2px; height: 16px;
+    background: #7aa2f7;
+  }
+  .sel-handle.end::before { top: 22px; }
+  .sel-handle.end::after {
+    content: '';
+    position: absolute;
+    left: 50%; top: 6px;
+    transform: translateX(-50%);
+    width: 2px; height: 16px;
+    background: #7aa2f7;
+  }
+  #sel-menu {
+    position: absolute;
+    pointer-events: auto;
+    background: #2a2f4a;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+    display: flex;
+    overflow: hidden;
+    transform: translate(-50%, -100%);
+    margin-top: -12px;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #sel-menu button {
+    background: transparent;
+    border: none;
+    color: #c0caf5;
+    font: 600 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    padding: 10px 16px;
+    cursor: pointer;
+  }
+  #sel-menu button:active { background: #414868; }
+  #sel-menu button + button { border-left: 1px solid #414868; }
 </style>
 </head>
 <body>
 <div id="terminal-container">
   <div id="terminal-surface"></div>
+</div>
+<div id="selection-overlay">
+  <div id="sel-handle-start" class="sel-handle start"></div>
+  <div id="sel-handle-end" class="sel-handle end"></div>
+  <div id="sel-menu">
+    <button id="sel-menu-copy">Copy</button>
+    <button id="sel-menu-all">Select All</button>
+  </div>
 </div>
 <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@6.1.0-beta.198/lib/xterm.min.js"></script>
 <script>
@@ -137,6 +232,7 @@ const XTERM_HTML = `<!DOCTYPE html>
 
   function updateTransform() {
     surface.style.transform = 'translate(' + panX + 'px,' + panY + 'px) scale(' + getTotalScale() + ')';
+    if (selMode === 'select') repositionOverlay();
   }
 
   function getCellHeight() {
@@ -282,6 +378,7 @@ const XTERM_HTML = `<!DOCTYPE html>
         vpWidth: vpW
       });
     }
+    repositionOverlay();
   }
 
   function isAltScreenActive(data) {
@@ -377,6 +474,11 @@ const XTERM_HTML = `<!DOCTYPE html>
     if (typeof replayData === 'string' && replayData.length > 0) {
       writeQueue.push(replayData);
     }
+
+    // Why: reset eviction tracking + attach observers for the new term.
+    resetEvictionCounter();
+    cancelSelect();
+    attachTermObservers();
 
     requestAnimationFrame(function() {
       if (gen !== terminalGeneration) return;
@@ -482,12 +584,481 @@ const XTERM_HTML = `<!DOCTYPE html>
       afterDrainCallbacks = [];
       writesDraining = false;
       if (term) { term.clear(); term.reset(); }
+      resetEvictionCounter();
+      if (selMode === 'select') {
+        notify({ type: 'selection-evicted' });
+        cancelSelect();
+      }
     } else if (msg.type === 'measure') {
       measureFitDimensions(msg.containerHeight);
     } else if (msg.type === 'reset-zoom') {
       applyFitScale('reset-zoom-msg');
+    } else if (msg.type === 'cancel-select') {
+      if (selMode === 'select') cancelSelect();
+    } else if (msg.type === 'do-select-all') {
+      if (term) {
+        try {
+          term.selectAll();
+          var b = term.buffer.active;
+          if (selMode !== 'select') {
+            selMode = 'select';
+            selectionOverlay.classList.add('active');
+            notify({ type: 'set-select-mode', enabled: true });
+          }
+          sel = {
+            anchor: { col: 0, row: 0 },
+            focus: { col: term.cols - 1, row: b.length - 1 },
+            activeHandle: null
+          };
+          repositionOverlay();
+        } catch (e) {}
+      }
     }
   }
+
+  // ============================================================
+  // SELECTION MODE (long-press → handles → Copy)
+  // ============================================================
+  var WORD_RE = /[\\p{L}\\p{N}_./:@~+=?&#%-]/u;
+  var LONG_PRESS_MS = 500;
+  var LONG_PRESS_SLOP = 10;
+  var EDGE_SCROLL_PX = 40;
+  var EDGE_SCROLL_INTERVAL = 60;
+
+  var selectionOverlay = document.getElementById('selection-overlay');
+  var handleStart = document.getElementById('sel-handle-start');
+  var handleEnd = document.getElementById('sel-handle-end');
+  var selMenu = document.getElementById('sel-menu');
+  var btnCopy = document.getElementById('sel-menu-copy');
+  var btnSelAll = document.getElementById('sel-menu-all');
+
+  // mode: 'navigate' | 'select'
+  var selMode = 'navigate';
+  var sel = null; // { anchor:{col,row}, focus:{col,row}, activeHandle:null|'start'|'end' }
+  var longPressTimer = null;
+  var longPressOrigin = null; // {x,y, identifier}
+  var edgeScrollTimer = null;
+  var edgeScrollDir = 0;
+
+  // Eviction watchdog: linesEverWritten counts onLineFeed since last init.
+  // Once buffer is full, every onLineFeed evicts the top row in xterm and
+  // we mirror that by decrementing stored absolute rows.
+  var linesEverWritten = 0;
+
+  function resetEvictionCounter() { linesEverWritten = 0; }
+
+  function isBufferFull() {
+    if (!term) return false;
+    return linesEverWritten >= 5000 + (term.rows || 0);
+  }
+
+  function checkEviction() {
+    if (selMode !== 'select' || !sel) return;
+    var oldest = Math.min(sel.anchor.row, sel.focus.row);
+    if (oldest < 0) {
+      notify({ type: 'selection-evicted' });
+      cancelSelect();
+    }
+  }
+
+  function logFeedAndEvict() {
+    linesEverWritten++;
+    if (selMode === 'select' && sel && isBufferFull()) {
+      sel.anchor.row -= 1;
+      sel.focus.row -= 1;
+      checkEviction();
+      repositionOverlay();
+    }
+  }
+
+  function emitModesIfChanged() {
+    if (!term) return;
+    var bp = !!(term.modes && term.modes.bracketedPasteMode);
+    var alt = false;
+    try { alt = term.buffer && term.buffer.active && term.buffer.active.type === 'alternate'; } catch (e) {}
+    if (bp !== lastEmittedModes.bracketedPasteMode || alt !== lastEmittedModes.altScreen) {
+      lastEmittedModes = { bracketedPasteMode: bp, altScreen: alt };
+      notify({ type: 'modes', bracketedPasteMode: bp, altScreen: alt });
+    }
+  }
+  var lastEmittedModes = { bracketedPasteMode: false, altScreen: false };
+
+  function attachTermObservers() {
+    if (!term) return;
+    try { term.onLineFeed(logFeedAndEvict); } catch (e) {}
+    // Why: emit modes on every parsed write so RN's mirror stays current
+    // without round-trip; covers \\x1b[?2004h/l and alt-screen toggles.
+    try { term.onWriteParsed && term.onWriteParsed(emitModesIfChanged); } catch (e) {}
+    // Initial emit once buffer settles.
+    afterWritesDrained(function() { emitModesIfChanged(); });
+  }
+
+  function viewportToCell(clientX, clientY) {
+    if (!term) return null;
+    var cellW = getCellWidth();
+    var cellH = getCellHeight();
+    if (cellW <= 0 || cellH <= 0) return null;
+    var total = getTotalScale();
+    if (total <= 0) total = 1;
+    var sx = (clientX - panX) / total;
+    var sy = (clientY - panY) / total;
+    var col = Math.floor(sx / cellW);
+    var viewportRow = Math.floor(sy / cellH);
+    if (col < 0) col = 0;
+    if (col > term.cols - 1) col = term.cols - 1;
+    if (viewportRow < 0) viewportRow = 0;
+    if (viewportRow > term.rows - 1) viewportRow = term.rows - 1;
+    var viewportY = term.buffer.active.viewportY;
+    return { col: col, row: viewportRow + viewportY };
+  }
+
+  function cellToViewportPx(col, absRow) {
+    if (!term) return { x: 0, y: 0 };
+    var cellW = getCellWidth();
+    var cellH = getCellHeight();
+    var viewportRow = absRow - term.buffer.active.viewportY;
+    var sx = col * cellW;
+    var sy = viewportRow * cellH;
+    var total = getTotalScale();
+    return { x: sx * total + panX, y: sy * total + panY };
+  }
+
+  function getLineText(absRow) {
+    if (!term) return '';
+    var line = term.buffer.active.getLine(absRow);
+    if (!line) return '';
+    return line.translateToString(false);
+  }
+
+  function seedWordSelection(col, absRow) {
+    var line = getLineText(absRow);
+    if (!line) {
+      sel = { anchor: { col: col, row: absRow }, focus: { col: col, row: absRow }, activeHandle: null };
+      applyXtermSelection();
+      return;
+    }
+    var s = col;
+    var e = col;
+    if (col >= 0 && col < line.length && WORD_RE.test(line[col])) {
+      while (s > 0 && WORD_RE.test(line[s - 1])) s--;
+      while (e < line.length - 1 && WORD_RE.test(line[e + 1])) e++;
+    }
+    sel = {
+      anchor: { col: s, row: absRow },
+      focus: { col: e, row: absRow },
+      activeHandle: null
+    };
+    applyXtermSelection();
+  }
+
+  function isStartFirst(a, b) {
+    if (a.row !== b.row) return a.row < b.row;
+    return a.col <= b.col;
+  }
+
+  function selRange() {
+    if (!sel) return null;
+    if (isStartFirst(sel.anchor, sel.focus)) return { start: sel.anchor, end: sel.focus };
+    return { start: sel.focus, end: sel.anchor };
+  }
+
+  function applyXtermSelection() {
+    if (!term || !sel) return;
+    var r = selRange();
+    if (!r) return;
+    var startVRow = r.start.row - term.buffer.active.viewportY;
+    var length;
+    if (r.start.row === r.end.row) {
+      length = Math.max(1, r.end.col - r.start.col + 1);
+    } else {
+      var first = term.cols - r.start.col;
+      var middle = Math.max(0, r.end.row - r.start.row - 1) * term.cols;
+      var last = r.end.col + 1;
+      length = first + middle + last;
+    }
+    try { term.select(r.start.col, startVRow, length); } catch (e) {}
+  }
+
+  function cancelSelect() {
+    selMode = 'navigate';
+    sel = null;
+    stopEdgeScroll();
+    if (term) {
+      try { term.clearSelection(); } catch (e) {}
+      // Why: some xterm renderers cache cells and skip repaint on
+      // clearSelection alone, leaving the previously-highlighted cells
+      // visually selected. Force a full refresh so the selection layer
+      // actually clears on screen.
+      try { term.refresh(0, term.rows - 1); } catch (e) {}
+    }
+    selectionOverlay.classList.remove('active');
+    notify({ type: 'set-select-mode', enabled: false });
+  }
+
+  function enterSelect(col, absRow) {
+    selMode = 'select';
+    seedWordSelection(col, absRow);
+    selectionOverlay.classList.add('active');
+    notify({ type: 'set-select-mode', enabled: true });
+    notify({ type: 'haptic', kind: 'selection' });
+    repositionOverlay();
+  }
+
+  function repositionOverlay() {
+    if (selMode !== 'select' || !sel || !term) return;
+    var r = selRange();
+    var sPx = cellToViewportPx(r.start.col, r.start.row);
+    var ePx = cellToViewportPx(r.end.col + 1, r.end.row);
+    var cellH = getCellHeight() * getTotalScale();
+    // Why: native iOS pattern — start handle anchors at the TOP of the
+    // first selected cell (dot above, stem covers the cell going down);
+    // end handle anchors at the BOTTOM of the last selected cell (dot
+    // below, stem covers the cell going up).
+    handleStart.style.left = sPx.x + 'px';
+    handleStart.style.top = sPx.y + 'px';
+    handleEnd.style.left = ePx.x + 'px';
+    handleEnd.style.top = (ePx.y + cellH) + 'px';
+    var startVisible = sPx.y >= 0 && sPx.y <= window.innerHeight;
+    var endVisible = ePx.y >= 0 && ePx.y <= window.innerHeight;
+    handleStart.style.visibility = startVisible ? 'visible' : 'hidden';
+    handleEnd.style.visibility = endVisible ? 'visible' : 'hidden';
+    var menuX, menuY;
+    if (startVisible && sPx.y > 56) {
+      menuX = sPx.x; menuY = sPx.y;
+    } else if (endVisible && ePx.y + cellH + 56 < window.innerHeight) {
+      menuX = ePx.x; menuY = ePx.y + cellH;
+      selMenu.style.transform = 'translate(-50%, 0)';
+      selMenu.style.marginTop = '12px';
+    } else {
+      // selection covers full viewport — pin to visible center
+      menuX = window.innerWidth / 2;
+      menuY = window.innerHeight / 2;
+      selMenu.style.transform = 'translate(-50%, -50%)';
+      selMenu.style.marginTop = '0';
+    }
+    if (startVisible && sPx.y > 56) {
+      selMenu.style.transform = 'translate(-50%, -100%)';
+      selMenu.style.marginTop = '-12px';
+    }
+    selMenu.style.left = menuX + 'px';
+    selMenu.style.top = menuY + 'px';
+  }
+
+  function startEdgeScroll(dir) {
+    if (edgeScrollDir === dir) return;
+    edgeScrollDir = dir;
+    stopEdgeScroll();
+    edgeScrollTimer = setInterval(function() {
+      if (!term || edgeScrollDir === 0) return;
+      var beforeY = term.buffer.active.viewportY;
+      term.scrollLines(edgeScrollDir);
+      var afterY = term.buffer.active.viewportY;
+      if (beforeY === afterY) {
+        notify({ type: 'haptic', kind: 'edge-bump' });
+        stopEdgeScroll();
+        return;
+      }
+      repositionOverlay();
+    }, EDGE_SCROLL_INTERVAL);
+  }
+
+  function stopEdgeScroll() {
+    if (edgeScrollTimer) {
+      clearInterval(edgeScrollTimer);
+      edgeScrollTimer = null;
+    }
+    edgeScrollDir = 0;
+  }
+
+  function handleDragMove(handle, clientX, clientY) {
+    var c = viewportToCell(clientX, clientY);
+    if (!c || !sel) return;
+    if (handle === 'start') sel.anchor = c;
+    else sel.focus = c;
+    applyXtermSelection();
+    repositionOverlay();
+    if (clientY < EDGE_SCROLL_PX) startEdgeScroll(-1);
+    else if (clientY > window.innerHeight - EDGE_SCROLL_PX) startEdgeScroll(1);
+    else stopEdgeScroll();
+  }
+
+  // ============================================================
+  // LATCHING TOUCH DISPATCHER (document-level)
+  // ============================================================
+  var dispatch = { mode: 'idle', touchId: null, touchIds: null, longPressFingerInsideOverlay: false };
+
+  function touchById(touches, id) {
+    for (var i = 0; i < touches.length; i++) {
+      if (touches[i].identifier === id) return touches[i];
+    }
+    return null;
+  }
+
+  function targetInside(target, el) {
+    if (!target || !el) return false;
+    return el.contains(target);
+  }
+
+  function clearLongPress() {
+    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    longPressOrigin = null;
+  }
+
+  function armLongPress(touch) {
+    longPressOrigin = { x: touch.clientX, y: touch.clientY, identifier: touch.identifier };
+    longPressTimer = setTimeout(function() {
+      longPressTimer = null;
+      if (!longPressOrigin) return;
+      var c = viewportToCell(longPressOrigin.x, longPressOrigin.y);
+      if (!c) return;
+      enterSelect(c.col, c.row);
+    }, LONG_PRESS_MS);
+  }
+
+  function touchSlopExceeded(t) {
+    if (!longPressOrigin) return false;
+    var dx = Math.abs(t.clientX - longPressOrigin.x);
+    var dy = Math.abs(t.clientY - longPressOrigin.y);
+    return (dx + dy) > LONG_PRESS_SLOP;
+  }
+
+  // Why: existing surface handlers stay attached to surface but we wrap
+  // their entry to no-op when the dispatcher latches into select-drag.
+  function dispatcherShouldBlockSurface() {
+    return dispatch.mode === 'select-drag';
+  }
+
+  document.addEventListener('touchstart', function(e) {
+    var t = e.touches[0];
+    var target = e.target;
+    var onHandle = target === handleStart || target === handleEnd;
+    var inOverlay = targetInside(target, selectionOverlay);
+    var inSurface = targetInside(target, surface);
+
+    if (e.touches.length === 2) {
+      // pinch latch
+      if (selMode === 'select') {
+        notify({ type: 'mobile-clip-cancel-by-pinch' });
+        cancelSelect();
+      }
+      dispatch.mode = 'pinch';
+      dispatch.touchIds = [e.touches[0].identifier, e.touches[1].identifier];
+      clearLongPress();
+      return;
+    }
+
+    if (onHandle && selMode === 'select') {
+      // start handle drag
+      var handleName = (target === handleStart) ? 'start' : 'end';
+      sel.activeHandle = handleName;
+      dispatch.mode = 'select-drag';
+      dispatch.touchId = t.identifier;
+      e.preventDefault();
+      return;
+    }
+
+    if (inOverlay) {
+      // tap on menu pill — let the buttons' own handlers fire
+      return;
+    }
+
+    if (inSurface && selMode === 'select') {
+      // Why: tap-to-dismiss matches native iOS/Android — touching outside the
+      // selection clears it. We cancel immediately and latch to 'surface' so
+      // the same gesture still drives scroll/pan without a second touch.
+      cancelSelect();
+      dispatch.mode = 'surface';
+      dispatch.touchId = t.identifier;
+      return;
+    }
+
+    if (inSurface) {
+      dispatch.mode = 'surface';
+      dispatch.touchId = t.identifier;
+      armLongPress(t);
+    }
+  }, { capture: true, passive: false });
+
+  document.addEventListener('touchmove', function(e) {
+    if (dispatch.mode === 'select-drag') {
+      var t = touchById(e.touches, dispatch.touchId);
+      if (!t || !sel || !sel.activeHandle) return;
+      e.preventDefault();
+      handleDragMove(sel.activeHandle, t.clientX, t.clientY);
+      return;
+    }
+    if (dispatch.mode === 'surface' || dispatch.mode === 'pinch') {
+      // long-press slop check
+      if (longPressTimer && e.touches.length === 1) {
+        if (touchSlopExceeded(e.touches[0])) clearLongPress();
+      }
+      // existing surface handler will run from its own listener
+    }
+  }, { capture: true, passive: false });
+
+  document.addEventListener('touchend', function(e) {
+    if (dispatch.mode === 'select-drag') {
+      if (sel) sel.activeHandle = null;
+      stopEdgeScroll();
+      dispatch.mode = 'idle';
+      dispatch.touchId = null;
+      return;
+    }
+    if (dispatch.mode === 'pinch') {
+      if (e.touches.length < 2) {
+        dispatch.mode = (e.touches.length === 1) ? 'surface' : 'idle';
+        dispatch.touchIds = null;
+        if (e.touches.length === 1) dispatch.touchId = e.touches[0].identifier;
+      }
+      return;
+    }
+    if (dispatch.mode === 'surface') {
+      clearLongPress();
+      if (e.touches.length === 0) {
+        dispatch.mode = 'idle';
+        dispatch.touchId = null;
+      }
+    }
+  }, { capture: true, passive: true });
+
+  document.addEventListener('touchcancel', function() {
+    clearLongPress();
+    stopEdgeScroll();
+    if (dispatch.mode === 'select-drag') {
+      if (sel) sel.activeHandle = null;
+    }
+    dispatch.mode = 'idle';
+    dispatch.touchId = null;
+    dispatch.touchIds = null;
+  }, { capture: true, passive: true });
+
+  btnCopy.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!term) return;
+    var text = term.getSelection ? term.getSelection() : '';
+    if (text && text.length > 0) {
+      notify({ type: 'selection', text: text });
+    } else {
+      cancelSelect();
+    }
+  });
+
+  btnSelAll.addEventListener('click', function(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!term) return;
+    try {
+      term.selectAll();
+      var b = term.buffer.active;
+      sel = {
+        anchor: { col: 0, row: 0 },
+        focus: { col: term.cols - 1, row: b.length - 1 },
+        activeHandle: null
+      };
+      repositionOverlay();
+    } catch (err) {}
+  });
 
   // Why: event listeners are registered once here (not inside init()) so
   // they don't accumulate on re-init. They close over the mutable 'term'
@@ -507,6 +1078,7 @@ const XTERM_HTML = `<!DOCTYPE html>
   }
 
   surface.addEventListener('touchstart', function(e) {
+    if (dispatcherShouldBlockSurface()) return;
     if (ts.momentumId) {
       cancelAnimationFrame(ts.momentumId);
       ts.momentumId = null;
@@ -531,6 +1103,7 @@ const XTERM_HTML = `<!DOCTYPE html>
   }, { capture: true, passive: true });
 
   surface.addEventListener('touchmove', function(e) {
+    if (dispatcherShouldBlockSurface()) return;
     if (!term) return;
     e.preventDefault();
     e.stopPropagation();
@@ -579,6 +1152,7 @@ const XTERM_HTML = `<!DOCTYPE html>
   }, { capture: true, passive: false });
 
   surface.addEventListener('touchend', function(e) {
+    if (dispatcherShouldBlockSurface()) return;
     if (!term) return;
 
     if (ts.isPinching && e.touches.length < 2) {
@@ -638,6 +1212,7 @@ const XTERM_HTML = `<!DOCTYPE html>
     // though there's now less vertical room and the fit ratio may differ.
     applyFitScale('window-resize');
     adjustRowsForViewport();
+    repositionOverlay();
     clampPan();
     updateTransform();
   });
@@ -653,7 +1228,15 @@ const XTERM_HTML = `<!DOCTYPE html>
 </html>`
 
 export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function TerminalWebView(
-  { style, onWebReady },
+  {
+    style,
+    onWebReady,
+    onSelectionMode,
+    onSelectionCopy,
+    onSelectionEvicted,
+    onModesChanged,
+    onHaptic
+  },
   ref
 ) {
   const webViewRef = useRef<WebView>(null)
@@ -729,9 +1312,42 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
         const tag = typeof msg.tag === 'string' ? msg.tag : '[fit]'
         // eslint-disable-next-line no-console
         console.log(tag, msg.payload)
+      } else if (msg.type === 'set-select-mode') {
+        onSelectionMode?.(!!msg.enabled)
+      } else if (msg.type === 'selection') {
+        const text = typeof msg.text === 'string' ? msg.text : ''
+        onSelectionCopy?.(text)
+      } else if (msg.type === 'selection-evicted') {
+        onSelectionEvicted?.()
+      } else if (msg.type === 'modes') {
+        onModesChanged?.({
+          bracketedPasteMode: !!msg.bracketedPasteMode,
+          altScreen: !!msg.altScreen
+        })
+      } else if (msg.type === 'haptic') {
+        const kind = msg.kind
+        if (
+          kind === 'selection' ||
+          kind === 'success' ||
+          kind === 'error' ||
+          kind === 'edge-bump'
+        ) {
+          onHaptic?.(kind)
+        }
+      } else if (msg.type === 'mobile-clip-cancel-by-pinch') {
+        // eslint-disable-next-line no-console
+        console.warn('[mobile-clip] selection cancelled by pinch')
       }
     },
-    [flushPendingMessages, onWebReady]
+    [
+      flushPendingMessages,
+      onWebReady,
+      onSelectionMode,
+      onSelectionCopy,
+      onSelectionEvicted,
+      onModesChanged,
+      onHaptic
+    ]
   )
 
   const handleLoadStart = useCallback(() => {
@@ -779,6 +1395,12 @@ export const TerminalWebView = forwardRef<TerminalWebViewHandle, Props>(function
       },
       resetZoom() {
         postMessage({ type: 'reset-zoom' })
+      },
+      cancelSelect() {
+        postMessage({ type: 'cancel-select' })
+      },
+      doSelectAll() {
+        postMessage({ type: 'do-select-all' })
       },
       async awaitReady(): Promise<void> {
         // Why: returns the in-flight ready promise (set by init); resolves

@@ -1,4 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { Animated, AppState, type AppStateStatus } from 'react-native'
+import * as Clipboard from 'expo-clipboard'
 import {
   View,
   Text,
@@ -19,9 +21,16 @@ import type { RpcClient } from '../../../../src/transport/rpc-client'
 import { loadHosts } from '../../../../src/transport/host-store'
 import { useHostClient } from '../../../../src/transport/client-context'
 import type { ConnectionState, RpcSuccess } from '../../../../src/transport/types'
-import { triggerMediumImpact } from '../../../../src/platform/haptics'
+import {
+  triggerMediumImpact,
+  triggerSelection,
+  triggerSuccess,
+  triggerError,
+  triggerEdgeBump
+} from '../../../../src/platform/haptics'
 import {
   TerminalWebView,
+  type TerminalModes,
   type TerminalWebViewHandle
 } from '../../../../src/terminal/TerminalWebView'
 import { StatusDot } from '../../../../src/components/StatusDot'
@@ -82,12 +91,22 @@ function TerminalPaneView({
   handle,
   active,
   onRef,
-  onWebReady
+  onWebReady,
+  onSelectionMode,
+  onSelectionCopy,
+  onSelectionEvicted,
+  onModesChanged,
+  onHaptic
 }: {
   handle: string
   active: boolean
   onRef: (handle: string, ref: TerminalWebViewHandle | null) => void
   onWebReady: (handle: string) => void
+  onSelectionMode: (handle: string, active: boolean) => void
+  onSelectionCopy: (handle: string, text: string) => void
+  onSelectionEvicted: (handle: string) => void
+  onModesChanged: (handle: string, modes: TerminalModes) => void
+  onHaptic: (kind: 'selection' | 'success' | 'error' | 'edge-bump') => void
 }) {
   const setRef = useCallback(
     (ref: TerminalWebViewHandle | null) => {
@@ -105,6 +124,11 @@ function TerminalPaneView({
         ref={setRef}
         style={styles.terminalWebView}
         onWebReady={() => onWebReady(handle)}
+        onSelectionMode={(a) => onSelectionMode(handle, a)}
+        onSelectionCopy={(t) => onSelectionCopy(handle, t)}
+        onSelectionEvicted={() => onSelectionEvicted(handle)}
+        onModesChanged={(m) => onModesChanged(handle, m)}
+        onHaptic={onHaptic}
       />
     </View>
   )
@@ -146,6 +170,14 @@ export default function SessionScreen() {
   // Why: server-authoritative display mode per terminal. The runtime is the
   // single source of truth — this state is populated from subscribe responses.
   const [terminalModes, setTerminalModes] = useState<Map<string, MobileDisplayMode>>(new Map())
+  const [selectModeActive, setSelectModeActive] = useState(false)
+  const [canPaste, setCanPaste] = useState(false)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
+  const toastOpacityRef = useRef(new Animated.Value(0))
+  // Why: WebView pushes terminal modes (bracketed-paste, alt-screen) on every
+  // change so paste reads a synchronous snapshot — no round-trip required.
+  const ptyModesRef = useRef<Map<string, TerminalModes>>(new Map())
+  const initialModesSeenRef = useRef<Set<string>>(new Set())
   const deviceTokenRef = useRef<string | null>(null)
   const clientRef = useRef<RpcClient | null>(null)
   // Why: measured once from TerminalWebView on mount, then passed with every
@@ -845,6 +877,138 @@ export default function SessionScreen() {
     }
   }
 
+  const showToast = useCallback((message: string, durationMs = 1200) => {
+    setToastMessage(message)
+    Animated.timing(toastOpacityRef.current, {
+      toValue: 1,
+      duration: 150,
+      useNativeDriver: true
+    }).start(() => {
+      setTimeout(() => {
+        Animated.timing(toastOpacityRef.current, {
+          toValue: 0,
+          duration: 200,
+          useNativeDriver: true
+        }).start(() => setToastMessage(null))
+      }, durationMs)
+    })
+  }, [])
+
+  const handleSelectionMode = useCallback((handle: string, active: boolean) => {
+    if (handle !== activeHandleRef.current) return
+    setSelectModeActive(active)
+    if (active) Keyboard.dismiss()
+  }, [])
+
+  const handleSelectionCopy = useCallback(
+    async (handle: string, text: string) => {
+      if (handle !== activeHandleRef.current) return
+      if (!text || text.length === 0) {
+        terminalRefs.current.get(handle)?.cancelSelect()
+        return
+      }
+      try {
+        await Clipboard.setStringAsync(text)
+        triggerSuccess()
+        showToast('Copied')
+        terminalRefs.current.get(handle)?.cancelSelect()
+      } catch (e) {
+        triggerError()
+        const err = e as { name?: string; message?: string }
+        // eslint-disable-next-line no-console
+        console.warn('[mobile-clip] setString failed', {
+          name: err.name,
+          message: err.message
+        })
+        showToast("Couldn't copy", 1500)
+      }
+    },
+    [showToast]
+  )
+
+  const handleSelectionEvicted = useCallback(
+    (handle: string) => {
+      if (handle !== activeHandleRef.current) return
+      // eslint-disable-next-line no-console
+      console.warn('[mobile-clip] selection evicted')
+      showToast('Selection cleared (scrolled out of buffer)', 1500)
+      setSelectModeActive(false)
+    },
+    [showToast]
+  )
+
+  const handleModesChanged = useCallback((handle: string, modes: TerminalModes) => {
+    ptyModesRef.current.set(handle, modes)
+    initialModesSeenRef.current.add(handle)
+  }, [])
+
+  const handleHaptic = useCallback((kind: 'selection' | 'success' | 'error' | 'edge-bump') => {
+    if (kind === 'selection') triggerSelection()
+    else if (kind === 'success') triggerSuccess()
+    else if (kind === 'error') triggerError()
+    else if (kind === 'edge-bump') triggerEdgeBump()
+  }, [])
+
+  const handlePaste = useCallback(async () => {
+    if (!client || !activeHandle || !canSend) return
+    try {
+      const text = await Clipboard.getStringAsync()
+      if (text.length === 0) return
+      const modes = ptyModesRef.current.get(activeHandle) || {
+        bracketedPasteMode: false,
+        altScreen: false
+      }
+      const wrap = modes.bracketedPasteMode && !modes.altScreen
+      const payload = wrap ? `\x1b[200~${text}\x1b[201~` : text
+      const wrappedBytes = new TextEncoder().encode(payload).byteLength
+      if (wrappedBytes > 256 * 1024) {
+        triggerError()
+        // eslint-disable-next-line no-console
+        console.warn('[mobile-clip] paste oversized', { wrappedBytes })
+        showToast('Paste too large (max 256 KiB)', 1500)
+        return
+      }
+      await client.sendRequest('terminal.send', {
+        terminal: activeHandle,
+        text: payload,
+        enter: false,
+        ...(deviceTokenRef.current
+          ? { client: { id: deviceTokenRef.current, type: 'mobile' as const } }
+          : {})
+      })
+      triggerSelection()
+      void Clipboard.hasStringAsync().then(setCanPaste)
+    } catch (e) {
+      triggerError()
+      const err = e as { name?: string; message?: string }
+      const isDisconnected = connState !== 'connected'
+      // eslint-disable-next-line no-console
+      console.warn('[mobile-clip] paste failed', { name: err.name, message: err.message })
+      if (isDisconnected) showToast('Paste failed (disconnected)', 1500)
+    }
+  }, [client, activeHandle, canSend, connState, showToast])
+
+  // Why: refresh canPaste on mount, AppState active, after paste.
+  useEffect(() => {
+    let mounted = true
+    const refresh = () => {
+      void Clipboard.hasStringAsync().then((has) => {
+        if (mounted) setCanPaste(has)
+      })
+    }
+    refresh()
+    const sub = AppState.addEventListener('change', (s: AppStateStatus) => {
+      if (s === 'active') refresh()
+      else if (selectModeActive && activeHandleRef.current) {
+        terminalRefs.current.get(activeHandleRef.current)?.cancelSelect()
+      }
+    })
+    return () => {
+      mounted = false
+      sub.remove()
+    }
+  }, [selectModeActive])
+
   async function handleCreateTerminal() {
     if (!client || creating) return
 
@@ -1078,8 +1242,21 @@ export default function SessionScreen() {
                 active={terminal.handle === activeHandle}
                 onRef={setTerminalWebViewRef}
                 onWebReady={handleTerminalWebReady}
+                onSelectionMode={handleSelectionMode}
+                onSelectionCopy={handleSelectionCopy}
+                onSelectionEvicted={handleSelectionEvicted}
+                onModesChanged={handleModesChanged}
+                onHaptic={handleHaptic}
               />
             ))}
+            {toastMessage && (
+              <Animated.View
+                pointerEvents="none"
+                style={[styles.toast, { opacity: toastOpacityRef.current }]}
+              >
+                <Text style={styles.toastText}>{toastMessage}</Text>
+              </Animated.View>
+            )}
           </View>
         )}
 
@@ -1115,6 +1292,24 @@ export default function SessionScreen() {
                   <Smartphone size={14} color={canSend ? colors.textSecondary : colors.textMuted} />
                 )}
               </Pressable>
+              {canPaste && (
+                <Pressable
+                  style={({ pressed }) => [
+                    styles.accessoryKey,
+                    pressed && styles.accessoryKeyPressed,
+                    !canSend && styles.accessoryKeyDisabled
+                  ]}
+                  disabled={!canSend}
+                  onPress={() => void handlePaste()}
+                  accessibilityLabel="Paste from clipboard"
+                >
+                  <Text
+                    style={[styles.accessoryKeyText, !canSend && styles.accessoryKeyTextDisabled]}
+                  >
+                    Paste
+                  </Text>
+                </Pressable>
+              )}
               {ACCESSORY_KEYS.map((key) => (
                 <Pressable
                   key={key.label}
@@ -1390,6 +1585,23 @@ const styles = StyleSheet.create({
   },
   terminalWebView: {
     flex: 1
+  },
+  toast: {
+    position: 'absolute',
+    bottom: spacing.lg,
+    alignSelf: 'center',
+    left: 0,
+    right: 0,
+    alignItems: 'center'
+  },
+  toastText: {
+    backgroundColor: 'rgba(20, 22, 39, 0.92)',
+    color: colors.textPrimary,
+    fontSize: 13,
+    paddingHorizontal: spacing.lg,
+    paddingVertical: spacing.sm,
+    borderRadius: radii.button,
+    overflow: 'hidden'
   },
   emptyState: {
     flex: 1,
