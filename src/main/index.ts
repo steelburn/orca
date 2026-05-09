@@ -275,7 +275,7 @@ function openMainWindow(): BrowserWindow {
     }
   })
   mainWindow = window
-  agentHookServer.setListener(({ paneKey, tabId, worktreeId, payload }) => {
+  agentHookServer.setListener(({ paneKey, tabId, worktreeId, connectionId, payload }) => {
     if (mainWindow?.isDestroyed()) {
       return
     }
@@ -283,6 +283,7 @@ function openMainWindow(): BrowserWindow {
       paneKey,
       tabId,
       worktreeId,
+      connectionId,
       ...payload
     })
     // Why: cursor-agent's OSC title stays "Cursor Agent" for the whole turn,

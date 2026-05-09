@@ -39,12 +39,23 @@ import { ORCA_HOOK_PROTOCOL_VERSION } from '../../shared/agent-hook-types'
 // conceptually similar to Claude's settings.json hooks but uses camelCase
 // event names (beforeSubmitPrompt, preToolUse, postToolUse, stop, etc.) per
 // https://cursor.com/docs/hooks. See normalizeCursorEvent below.
-type AgentHookSource = 'claude' | 'codex' | 'gemini' | 'opencode' | 'cursor' | 'pi'
+// Why: re-export from the shared module so any consumer that already imported
+// `AgentHookSource` from this file keeps compiling. The shared definition is
+// the canonical one because the relay needs the same discriminator without
+// dragging Electron in.
+import type { AgentHookSource as SharedAgentHookSource } from '../../shared/agent-hook-relay'
+export type AgentHookSource = SharedAgentHookSource
 
 type AgentHookEventPayload = {
   paneKey: string
   tabId?: string
   worktreeId?: string
+  // Why: identifies the SSH connection the event arrived on, or null for
+  // local. Stamped here only on the remote-ingest path (`ingestRemote`); the
+  // local HTTP path stamps null. See docs/design/agent-status-over-ssh.md §5
+  // — the renderer uses this for stale-event filtering when a connection
+  // tears down with notifications still in flight.
+  connectionId: string | null
   payload: ParsedAgentStatusPayload
 }
 
@@ -1157,7 +1168,10 @@ function normalizeHookPayload(
               ? normalizePiEvent(eventName, promptText, paneKey, hookPayloadRecord)
               : normalizeOpenCodeEvent(eventName, promptText, paneKey, hookPayloadRecord)
 
-  return payload ? { paneKey, tabId, worktreeId, payload } : null
+  // Why: connectionId stays null on the local HTTP path. The relay-forwarded
+  // path stamps it from `mux` identity inside `ingestRemote`. See
+  // docs/design/agent-status-over-ssh.md §5.
+  return payload ? { paneKey, tabId, worktreeId, connectionId: null, payload } : null
 }
 
 // Why: the endpoint file lives under userData so each Orca install (dev vs.

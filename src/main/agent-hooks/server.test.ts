@@ -77,6 +77,7 @@ describe('AgentHookServer listener replay', () => {
         paneKey: PANE,
         tabId: 'tab-1',
         worktreeId: 'wt-1',
+        connectionId: null,
         payload: expect.objectContaining({
           state: 'working',
           prompt: 'replay me',
@@ -151,6 +152,7 @@ describe('AgentHookServer listener replay', () => {
         paneKey: PANE,
         tabId: 'tab-1',
         worktreeId: 'repo::/tmp/worktree with "quotes"',
+        connectionId: null,
         payload: expect.objectContaining({
           state: 'working',
           prompt: 'form encoded',
