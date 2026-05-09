@@ -124,7 +124,7 @@ function runConnectMode(sockPath: string): void {
 
 // ── Normal mode ──────────────────────────────────────────────────────
 
-function main(): void {
+async function main(): Promise<void> {
   const { graceTimeMs, connectMode, detached, sockPath } = parseArgs(process.argv)
 
   if (connectMode) {
@@ -232,14 +232,20 @@ function main(): void {
       )
     }
   })
-  // Why: start asynchronously so a hook-server bind failure does not crash
-  // the relay before the main JSON-RPC channel is up. If it fails the relay
-  // still functions for everything else; agent status just won't flow.
-  void hookServer.start().catch((err) => {
+  // Why: await the hook-server bind before announcing readiness so the very
+  // first PTY spawn (which can land within milliseconds of the sentinel)
+  // already sees populated ORCA_AGENT_HOOK_* env. The bind is a local-loopback
+  // listen — measured in ms — so the latency cost is trivial and removes a
+  // class of "first agent invocation has no status" races. Bind failure is
+  // treated as soft: log and continue, the augmenter returns {} and agent
+  // status simply does not flow.
+  try {
+    await hookServer.start()
+  } catch (err) {
     process.stderr.write(
       `[relay] agent-hook server failed to start: ${err instanceof Error ? err.message : String(err)}\n`
     )
-  })
+  }
 
   // Why: every relay-spawned PTY needs the live ORCA_AGENT_HOOK_* coords. The
   // augmenter is read on every spawn so a hook-server bind that succeeded
@@ -306,9 +312,20 @@ function main(): void {
   // would force a relay redeploy on every Orca update). Cache them so each
   // subsequent PTY spawn can materialize a per-PTY overlay rooted under
   // $HOME/.orca-relay/. See docs/design/agent-status-over-ssh.md §4.
+  // Why: bound the per-source size so a buggy/hostile Orca can't OOM the
+  // relay by pushing a giant string. The HTTP path has HOOK_REQUEST_MAX_BYTES
+  // = 1 MB; the JSON-RPC path needs an equivalent ceiling. Real plugin sources
+  // are <50 KB today; 256 KB leaves generous headroom.
+  const PLUGIN_SOURCE_MAX_BYTES = 256 * 1024
   dispatcher.onRequest(AGENT_HOOK_INSTALL_PLUGINS_METHOD, async (params) => {
     const opencode = params.opencodePluginSource
     const pi = params.piExtensionSource
+    if (typeof opencode === 'string' && opencode.length > PLUGIN_SOURCE_MAX_BYTES) {
+      throw new Error(`opencodePluginSource exceeds ${PLUGIN_SOURCE_MAX_BYTES} byte cap`)
+    }
+    if (typeof pi === 'string' && pi.length > PLUGIN_SOURCE_MAX_BYTES) {
+      throw new Error(`piExtensionSource exceeds ${PLUGIN_SOURCE_MAX_BYTES} byte cap`)
+    }
     pluginOverlay.setSources({
       opencodePluginSource: typeof opencode === 'string' ? opencode : undefined,
       piExtensionSource: typeof pi === 'string' ? pi : undefined
@@ -515,4 +532,9 @@ function cleanupSocket(sockPath: string): void {
   }
 }
 
-main()
+main().catch((err) => {
+  process.stderr.write(
+    `[relay] fatal in main(): ${err instanceof Error ? (err.stack ?? err.message) : String(err)}\n`
+  )
+  process.exit(1)
+})

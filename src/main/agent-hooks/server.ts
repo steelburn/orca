@@ -18,6 +18,7 @@ import {
   createHookListenerState,
   getEndpointFileName,
   HOOK_REQUEST_SLOWLORIS_MS,
+  MAX_PANE_KEY_LEN,
   normalizeHookPayload,
   parseFormEncodedBody,
   readRequestBody,
@@ -27,7 +28,10 @@ import {
   type AgentHookEventPayload,
   type HookListenerState
 } from '../../shared/agent-hook-listener'
+import { AGENT_STATUS_STATES } from '../../shared/agent-status-types'
 import type { AgentHookSource } from '../../shared/agent-hook-relay'
+
+const ALLOWED_AGENT_STATES = new Set<string>(AGENT_STATUS_STATES)
 
 export type { AgentHookSource }
 
@@ -91,12 +95,19 @@ export class AgentHookServer {
     if (!envelope || typeof envelope.paneKey !== 'string' || envelope.paneKey.length === 0) {
       return
     }
+    // Why: defense-in-depth at the trust boundary. The relay normalizes the
+    // payload, but a buggy/older/compromised relay could still push pathological
+    // values into our per-pane cache. Apply the same paneKey cap and state
+    // enum check the HTTP path enforces via normalizeHookPayload.
+    if (envelope.paneKey.length > MAX_PANE_KEY_LEN) {
+      return
+    }
     const payload = envelope.payload
-    if (
-      typeof payload !== 'object' ||
-      payload === null ||
-      typeof (payload as { state?: unknown }).state !== 'string'
-    ) {
+    if (typeof payload !== 'object' || payload === null) {
+      return
+    }
+    const state = (payload as { state?: unknown }).state
+    if (typeof state !== 'string' || !ALLOWED_AGENT_STATES.has(state)) {
       return
     }
     // Why: run the same warn-once diagnostics the HTTP path runs (cross-build
@@ -112,8 +123,9 @@ export class AgentHookServer {
       tabId: envelope.tabId,
       worktreeId: envelope.worktreeId,
       connectionId,
-      // Why: trust the relay-side normalization. The shared listener module
-      // already enforced the field-shape invariants on the remote.
+      // Why: payload shape beyond `state` is trusted from the relay-side
+      // normalizer; the cast keeps TS happy without re-running the heavy
+      // per-CLI extractor pipeline a second time.
       payload: payload as AgentHookEventPayload['payload']
     }
     this.state.lastStatusByPaneKey.set(event.paneKey, event)
@@ -259,6 +271,14 @@ export class AgentHookServer {
     })
     this.endpointFileWritten = ok
   }
+
+  /** Test-only accessor for the per-instance listener state. The `_internals`
+   *  shim needs to reach this without exposing `state` on the public surface
+   *  to renderer/main callers. AGENTS.md disallows `as unknown as X` escapes,
+   *  so we expose a narrow getter rather than casting the private field. */
+  _getStateForTests(): HookListenerState {
+    return this.state
+  }
 }
 
 export const agentHookServer = new AgentHookServer()
@@ -272,19 +292,9 @@ export const _internals = {
     body: unknown,
     expectedEnv: string
   ): AgentHookEventPayload | null =>
-    normalizeHookPayload(_singletonState(), source, body, expectedEnv),
+    normalizeHookPayload(agentHookServer._getStateForTests(), source, body, expectedEnv),
   parseFormEncodedBody,
   resetCachesForTests: (): void => {
-    clearAllListenerCaches(_singletonState())
+    clearAllListenerCaches(agentHookServer._getStateForTests())
   }
-}
-
-// Why: ergonomic accessor so the `_internals` shim can reach the singleton's
-// per-instance state without exposing `state` on the public class surface.
-function _singletonState(): HookListenerState {
-  // The runtime field is private, but tests access this module exclusively
-  // through `_internals`, which only fires after the module-level
-  // `agentHookServer` is constructed. The cast keeps the compile-time
-  // private invariant intact.
-  return (agentHookServer as unknown as { state: HookListenerState }).state
 }

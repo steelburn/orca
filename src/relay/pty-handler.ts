@@ -103,11 +103,13 @@ export class PtyHandler {
   private dispatcher: RelayDispatcher
   private graceTimeMs: number
   private graceTimer: ReturnType<typeof setTimeout> | null = null
-  // Why: external observers (the relay's hook-server cache) need to drop
-  // per-pane state when a PTY exits. Multiple listeners is unnecessary today
-  // — the hook server is the only consumer — so a single optional callback
-  // keeps the surface tight. A throw inside the listener is swallowed so it
-  // can never block disposeManagedPty / map cleanup.
+  // Why: external observers need to drop per-pane state when a PTY exits.
+  // Today the relay composes multiple consumers (hook-server cache eviction
+  // and plugin-overlay dir cleanup) into a single callback at the call site
+  // (see relay.ts setExitListener). A single optional slot is intentional —
+  // callers compose externally rather than us maintaining a listener list.
+  // A throw inside the listener is swallowed so it can never block
+  // disposeManagedPty / map cleanup.
   private exitListener: PtyExitListener | null = null
   // Why: env augmenters injected at relay boot (currently the relay-hook
   // server's ORCA_AGENT_HOOK_* coords). Run on every spawn so every PTY
@@ -237,9 +239,12 @@ export class PtyHandler {
     // Why: server-side env injection — agent-hook coords (PORT/TOKEN/ENDPOINT)
     // come from augmenters registered at relay boot, so the agent CLI inside
     // the PTY can post to the relay's loopback hook server without Orca having
-    // to ferry them across the SSH wire. Augmenter values are placed AFTER
-    // the renderer-supplied env so a deliberate user override (rare) still
-    // wins, matching docs/design/agent-status-over-ssh.md §3.
+    // to ferry them across the SSH wire. Augmenter values are merged AFTER
+    // the renderer-supplied env so they OVERRIDE same-named keys — the
+    // renderer may set OPENCODE_CONFIG_DIR / PI_CODING_AGENT_DIR pointing at
+    // Orca's local userData, paths that are meaningless on the remote and
+    // must be replaced by the relay's overlay dirs.
+    // See docs/design/agent-status-over-ssh.md §3.
     // Why: capture the renderer-supplied paneKey BEFORE running augmenters so
     // overlay-materializing augmenters (OpenCode/Pi) can derive per-PTY paths
     // from a stable identity. Falls back to the relay-internal `id` if the
