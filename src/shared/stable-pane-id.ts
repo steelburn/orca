@@ -1,7 +1,7 @@
 // Why: paneKey crosses boundaries that outlive the renderer's PaneManager
 // (renderer reload, app restart, child-process hooks via ORCA_PANE_KEY) and
 // must therefore embed an opaque, stable identifier rather than the
-// renderer-local numeric paneId — see docs/agent-status-pane-mismapping.md.
+// renderer-local numeric paneId.
 //
 // The renderer mints v4 UUIDs (8-4-4-4-12 hex with dashes) for stablePaneId.
 // IPC ingress uses this regex to drop pre-migration agent-hook events whose

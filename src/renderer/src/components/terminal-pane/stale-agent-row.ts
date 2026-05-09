@@ -6,8 +6,6 @@ import { useAppStore } from '@/store'
  *  whose stablePaneId no longer maps to any pane) and the malformed/legacy
  *  paneKey branch in sidebar click handlers — those keys can't decompose into
  *  a tabId + UUID stableId, so they need direct paneKey-based dismissal.
- *
- *  See docs/agent-status-pane-mismapping.md for the full rationale.
  */
 export function dismissStaleAgentRowByKey(paneKey: string): void {
   const store = useAppStore.getState()

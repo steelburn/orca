@@ -2,8 +2,7 @@
 // randomUUID, and embedded Electron preloads on older Node builds can also
 // be missing it. Fall back to a v4-style polyfill so PaneManager always
 // produces a valid stablePaneId — the v4 UUID guard at IPC ingress keys off
-// the 8-4-4-4-12 hex shape, not a runtime check on crypto.randomUUID. See
-// docs/agent-status-pane-mismapping.md for why this id is mission-critical.
+// the 8-4-4-4-12 hex shape, not a runtime check on crypto.randomUUID.
 export function mintStablePaneId(): string {
   const cryptoApi = globalThis.crypto as Crypto | undefined
   if (cryptoApi?.randomUUID) {

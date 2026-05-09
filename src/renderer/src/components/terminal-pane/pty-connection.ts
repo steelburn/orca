@@ -113,9 +113,9 @@ export function connectPanePty(
 
   // Why: cache timer state and paneKey are keyed by stablePaneId (not the
   // renderer-local numeric paneId) so they survive a renderer reload's
-  // pane renumber — see docs/agent-status-pane-mismapping.md. The same
-  // string crosses the IPC boundary as ORCA_PANE_KEY, so external hooks
-  // route their events back to the correct pane post-restore.
+  // pane renumber. The same string crosses the IPC boundary as
+  // ORCA_PANE_KEY, so external hooks route their events back to the
+  // correct pane post-restore.
   const cacheKey = `${deps.tabId}:${pane.stablePaneId}`
   const pendingSpawnKey = `${deps.tabId}:${paneLeafId(pane.id)}`
 

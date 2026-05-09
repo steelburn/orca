@@ -128,8 +128,7 @@ export function useTerminalPaneGlobalEffects({
         // wasn't restored (legacy snapshot path). The right behavior is to
         // surface that the agent's pane is gone, not to silently focus a
         // different leaf — that's how the previous bug presented. Do NOT
-        // ack: the user didn't actually see the agent. See
-        // docs/agent-status-pane-mismapping.md.
+        // ack: the user didn't actually see the agent.
         surfaceStaleAgentRow(tabId, stablePaneId)
         return
       }

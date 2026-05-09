@@ -411,9 +411,8 @@ export default function TerminalPane({
       } else {
         // Why: cache timer + agent status are keyed by stablePaneId so the
         // entries match what pty-connection wrote and what hook events
-        // landed under — see docs/agent-status-pane-mismapping.md. The
-        // numeric paneId here is the renderer-local handle for closing;
-        // identity uses the UUID.
+        // landed under. The numeric paneId here is the renderer-local
+        // handle for closing; identity uses the UUID.
         const stablePaneId = manager.getStablePaneId(paneId)
         if (stablePaneId) {
           const paneKey = `${tabId}:${stablePaneId}`

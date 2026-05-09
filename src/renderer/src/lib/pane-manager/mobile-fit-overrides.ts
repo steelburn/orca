@@ -16,8 +16,7 @@ const overridesByPtyId = new Map<string, FitOverride>()
 // reloads — so the key carries the renderer-local numeric paneId rather than
 // the cross-boundary stablePaneId. Renamed away from `ptyIdByInternalPaneKey` so the
 // shape doesn't collide visually with the ${tabId}:${stablePaneId} paneKey
-// used by agentStatusByPaneKey, ORCA_PANE_KEY, etc. See
-// docs/agent-status-pane-mismapping.md.
+// used by agentStatusByPaneKey, ORCA_PANE_KEY, etc.
 const ptyIdByInternalPaneKey = new Map<string, string>()
 
 // Why: the override maps are plain JS — React components that read them

@@ -55,9 +55,9 @@ export class PaneManager {
   private destroyed = false
   private renderingSuspended: boolean
   // Why: stablePaneId is the cross-boundary identity for paneKey,
-  // ORCA_PANE_KEY, and persisted layout snapshots — see
-  // docs/agent-status-pane-mismapping.md. Mirror the numeric↔stable mapping
-  // here so getNumericIdForStable resolves in O(1) without iterating panes.
+  // ORCA_PANE_KEY, and persisted layout snapshots. Mirror the
+  // numeric↔stable mapping here so getNumericIdForStable resolves in
+  // O(1) without iterating panes.
   private stableIdByNumericId: Map<number, string> = new Map()
   private numericIdByStableId: Map<string, number> = new Map()
 

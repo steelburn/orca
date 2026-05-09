@@ -846,8 +846,7 @@ export function useIpcEvents(): void {
         // guard is silent — it's a one-time migration filter, not a user-
         // facing error. Internal renderer setAgentStatus calls (test
         // fixtures, in-renderer mints) are unaffected because they don't
-        // pass through this listener. See
-        // docs/agent-status-pane-mismapping.md (Migration & rollout).
+        // pass through this listener.
         const parsed = parsePaneKey(data.paneKey)
         if (!parsed) {
           return

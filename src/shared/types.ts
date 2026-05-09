@@ -368,8 +368,7 @@ export type TerminalLayoutSnapshot = {
   /** Per-leaf opaque UUID minted at pane creation. Persisted so layout replay
    *  can reattach the same identity (paneKey, ORCA_PANE_KEY, retained agent
    *  rows) to the leaf it previously belonged to. Optional on legacy snapshots
-   *  written before this field existed — see
-   *  docs/agent-status-pane-mismapping.md. */
+   *  written before this field existed. */
   stablePaneIdByLeafId?: Record<string, string>
 }
 

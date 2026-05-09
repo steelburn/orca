@@ -90,7 +90,7 @@ const WorktreeCardAgentsBody = React.memo(function WorktreeCardAgentsBody({
       // Why: dismissal happens inline for malformed/legacy paneKeys (can't
       // decompose into a UUID stableId, so the focus dispatch can't fire);
       // for live keys whose pane is gone, surfaceStaleAgentRow handles it
-      // via the focus-listener path. See docs/agent-status-pane-mismapping.md.
+      // via the focus-listener path.
       const parsed = parsePaneKey(paneKey)
       if (!parsed) {
         console.warn('[WorktreeCardAgents] malformed paneKey, skipping pane focus', paneKey)

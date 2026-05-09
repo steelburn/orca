@@ -77,8 +77,7 @@ export type ManagedPane = {
    *  unlike `id`, which is a renderer-local counter that renumbers in
    *  replayTerminalLayout. Use this (not `id`) as the cross-boundary identity
    *  in paneKey (`${tabId}:${stablePaneId}`), in `ORCA_PANE_KEY`, and in any
-   *  store/IPC value that must survive a renderer reload. See
-   *  docs/agent-status-pane-mismapping.md. */
+   *  store/IPC value that must survive a renderer reload. */
   stablePaneId: string
   terminal: Terminal
   container: HTMLElement // the .pane element
