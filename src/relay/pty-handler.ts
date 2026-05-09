@@ -91,7 +91,11 @@ const ALLOWED_SIGNALS = new Set([
 type SerializedPtyEntry = { id: string; pid: number; cols: number; rows: number; cwd: string }
 
 export type PtyExitListener = (event: { id: string; paneKey?: string }) => void
-export type PtyEnvAugmenter = () => Record<string, string>
+/** Returns env to merge into the PTY's spawn env. Receives spawn context so
+ *  augmenters that need a per-PTY identity (e.g. OPENCODE_CONFIG_DIR overlay
+ *  paths derived from the renderer's paneKey) can compute it without pulling
+ *  the renderer's env in twice. */
+export type PtyEnvAugmenter = (ctx: { id: string; paneKey?: string }) => Record<string, string>
 
 export class PtyHandler {
   private ptys = new Map<string, ManagedPty>()
@@ -236,10 +240,16 @@ export class PtyHandler {
     // to ferry them across the SSH wire. Augmenter values are placed AFTER
     // the renderer-supplied env so a deliberate user override (rare) still
     // wins, matching docs/design/agent-status-over-ssh.md §3.
+    // Why: capture the renderer-supplied paneKey BEFORE running augmenters so
+    // overlay-materializing augmenters (OpenCode/Pi) can derive per-PTY paths
+    // from a stable identity. Falls back to the relay-internal `id` if the
+    // renderer did not supply ORCA_PANE_KEY.
+    const augmenterPaneKey = typeof env?.ORCA_PANE_KEY === 'string' ? env.ORCA_PANE_KEY : undefined
+    const augmenterCtx = { id, paneKey: augmenterPaneKey }
     const augmented: Record<string, string> = {}
     for (const augmenter of this.envAugmenters) {
       try {
-        Object.assign(augmented, augmenter())
+        Object.assign(augmented, augmenter(augmenterCtx))
       } catch (err) {
         process.stderr.write(
           `[pty-handler] env augmenter threw: ${err instanceof Error ? err.message : String(err)}\n`
