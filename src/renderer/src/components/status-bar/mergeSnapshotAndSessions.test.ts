@@ -1,3 +1,5 @@
+/* eslint-disable max-lines -- Why: this suite keeps the resource-usage merge matrix
+   together so snapshot/daemon/session attribution regressions share one fixture set. */
 import { describe, expect, it } from 'vitest'
 import type { MemorySnapshot, TerminalTab, WorktreeMemory } from '../../../../shared/types'
 import { makePaneKey } from '../../../../shared/stable-pane-id'
@@ -186,6 +188,142 @@ describe('mergeSnapshotAndSessions', () => {
     const out = mergeSnapshotAndSessions(makeSnapshot([wt]), [], ctx)
 
     expect(out[0].worktrees[0].sessions[0].label).toBe('Claude Code')
+  })
+
+  it('race window single-pane fallback: empty mirror but one live title in the same tab → use that title', () => {
+    const stablePaneId = '22222222-2222-4222-8222-222222222222'
+    const paneKey = makePaneKey('tab-1', stablePaneId)
+    const wt: WorktreeMemory = {
+      worktreeId: 'orca::/Users/me/Triton',
+      worktreeName: 'Triton',
+      repoId: 'orca',
+      repoName: 'ORCA',
+      cpu: 0.1,
+      memory: 50_000_000,
+      history: [],
+      sessions: [{ sessionId: 'pty-1', paneKey, pid: 999, cpu: 0.1, memory: 50_000_000 }]
+    }
+    const ctx = baseCtx({
+      tabsByWorktree: { 'orca::/Users/me/Triton': [makeTab('tab-1', 'Terminal 1')] },
+      // Why: simulate the race where PaneManager hasn't yet populated the
+      // paneKey→numericId mirror for this snapshot session, but the runtime
+      // title map already holds the one (and only) pane's title. ptyIdsByTabId
+      // is the stronger single-pane guard because runtime titles are sparse.
+      ptyIdsByTabId: { 'tab-1': ['pty-1'] },
+      runtimePaneTitlesByTabId: { 'tab-1': { 7: 'Claude Code' } },
+      numericPaneIdByPaneKey: {}
+    })
+
+    const out = mergeSnapshotAndSessions(makeSnapshot([wt]), [], ctx)
+
+    expect(out[0].worktrees[0].sessions[0].label).toBe('Claude Code')
+  })
+
+  it('race window single-pane fallback: multi-pane tab is ambiguous → falls back to defaultTitle', () => {
+    const stablePaneId = '33333333-3333-4333-8333-333333333333'
+    const paneKey = makePaneKey('tab-1', stablePaneId)
+    const wt: WorktreeMemory = {
+      worktreeId: 'orca::/Users/me/Triton',
+      worktreeName: 'Triton',
+      repoId: 'orca',
+      repoName: 'ORCA',
+      cpu: 0.1,
+      memory: 50_000_000,
+      history: [],
+      sessions: [{ sessionId: 'pty-1', paneKey, pid: 999, cpu: 0.1, memory: 50_000_000 }]
+    }
+    const ctx = baseCtx({
+      tabsByWorktree: { 'orca::/Users/me/Triton': [makeTab('tab-1', 'Terminal 1')] },
+      // Why: two non-empty titles in the same tab make attribution ambiguous;
+      // the fallback must skip and let the tab-level default win rather than
+      // mis-attribute a sibling pane's title (e.g. "vim") to this session.
+      runtimePaneTitlesByTabId: { 'tab-1': { 7: 'Claude Code', 8: 'vim' } },
+      numericPaneIdByPaneKey: {}
+    })
+
+    const out = mergeSnapshotAndSessions(makeSnapshot([wt]), [], ctx)
+
+    expect(out[0].worktrees[0].sessions[0].label).toBe('Terminal 1')
+  })
+
+  it('race window single-pane fallback: sparse title map but multiple live PTYs is ambiguous → falls back to defaultTitle', () => {
+    const stablePaneId = '66666666-6666-4666-8666-666666666666'
+    const paneKey = makePaneKey('tab-1', stablePaneId)
+    const wt: WorktreeMemory = {
+      worktreeId: 'orca::/Users/me/Triton',
+      worktreeName: 'Triton',
+      repoId: 'orca',
+      repoName: 'ORCA',
+      cpu: 0.1,
+      memory: 50_000_000,
+      history: [],
+      sessions: [{ sessionId: 'pty-2', paneKey, pid: 999, cpu: 0.1, memory: 50_000_000 }]
+    }
+    const ctx = baseCtx({
+      tabsByWorktree: { 'orca::/Users/me/Triton': [makeTab('tab-1', 'Terminal 1')] },
+      // Why: runtimePaneTitlesByTabId is sparse; an untitled split sibling may
+      // have no entry. Multiple live PTYs prove the tab is ambiguous even when
+      // there is only one title-map key.
+      ptyIdsByTabId: { 'tab-1': ['pty-1', 'pty-2'] },
+      runtimePaneTitlesByTabId: { 'tab-1': { 7: 'Claude Code' } },
+      numericPaneIdByPaneKey: {}
+    })
+
+    const out = mergeSnapshotAndSessions(makeSnapshot([wt]), [], ctx)
+
+    expect(out[0].worktrees[0].sessions[0].label).toBe('Terminal 1')
+  })
+
+  it('race window single-pane fallback: multi-pane tab with one untitled pane is still ambiguous → falls back to defaultTitle', () => {
+    const stablePaneId = '55555555-5555-4555-8555-555555555555'
+    const paneKey = makePaneKey('tab-1', stablePaneId)
+    const wt: WorktreeMemory = {
+      worktreeId: 'orca::/Users/me/Triton',
+      worktreeName: 'Triton',
+      repoId: 'orca',
+      repoName: 'ORCA',
+      cpu: 0.1,
+      memory: 50_000_000,
+      history: [],
+      sessions: [{ sessionId: 'pty-1', paneKey, pid: 999, cpu: 0.1, memory: 50_000_000 }]
+    }
+    const ctx = baseCtx({
+      tabsByWorktree: { 'orca::/Users/me/Triton': [makeTab('tab-1', 'Terminal 1')] },
+      // Why: pane cardinality is what makes attribution ambiguous, not the
+      // count of non-empty titles. A 2-pane tab where one pane is unnamed
+      // must still skip the fallback — picking the named pane's title
+      // could mis-attribute it to the unnamed pane's session.
+      runtimePaneTitlesByTabId: { 'tab-1': { 7: 'Claude Code', 8: '' } },
+      numericPaneIdByPaneKey: {}
+    })
+
+    const out = mergeSnapshotAndSessions(makeSnapshot([wt]), [], ctx)
+
+    expect(out[0].worktrees[0].sessions[0].label).toBe('Terminal 1')
+  })
+
+  it('race window single-pane fallback: only empty/whitespace titles → falls back to defaultTitle', () => {
+    const stablePaneId = '44444444-4444-4444-8444-444444444444'
+    const paneKey = makePaneKey('tab-1', stablePaneId)
+    const wt: WorktreeMemory = {
+      worktreeId: 'orca::/Users/me/Triton',
+      worktreeName: 'Triton',
+      repoId: 'orca',
+      repoName: 'ORCA',
+      cpu: 0.1,
+      memory: 50_000_000,
+      history: [],
+      sessions: [{ sessionId: 'pty-1', paneKey, pid: 999, cpu: 0.1, memory: 50_000_000 }]
+    }
+    const ctx = baseCtx({
+      tabsByWorktree: { 'orca::/Users/me/Triton': [makeTab('tab-1', 'Terminal 1')] },
+      runtimePaneTitlesByTabId: { 'tab-1': { 7: '', 8: '   ' } },
+      numericPaneIdByPaneKey: {}
+    })
+
+    const out = mergeSnapshotAndSessions(makeSnapshot([wt]), [], ctx)
+
+    expect(out[0].worktrees[0].sessions[0].label).toBe('Terminal 1')
   })
 
   it('repo aggregate excludes remote children but flags hasRemoteChildren', () => {

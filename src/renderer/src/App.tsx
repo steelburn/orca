@@ -889,7 +889,7 @@ function App(): React.JSX.Element {
                         </button>
                         {agents.map((agent) => (
                           <button
-                            key={`${agent.tabId}:${agent.paneId ?? 'none'}:${agent.label}`}
+                            key={`${agent.tabId}:${agent.stablePaneId ?? agent.paneId ?? 'none'}:${agent.label}`}
                             className="titlebar-agent-hovercard-agent"
                             onClick={() => {
                               activateAndRevealWorktree(worktreeId)

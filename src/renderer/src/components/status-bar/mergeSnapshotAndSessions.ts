@@ -174,6 +174,21 @@ function resolveSnapshotSessionLabel(
       if (runtime) {
         return runtime
       }
+      // Why: when the mirror briefly lacks an entry for this paneKey, we can
+      // only borrow the same-tab runtime title if this snapshot session is the
+      // tab's sole live PTY. runtimePaneTitlesByTabId is sparse (untitled panes
+      // may have no entry), so title-map cardinality alone is not a safe pane
+      // count. The PTY binding keeps split-pane tabs ambiguous instead of
+      // mis-attributing a sibling pane's title to this session.
+      const runtimeMap = ctx.runtimePaneTitlesByTabId[parsed.tabId]
+      const tabPtyIds = ctx.ptyIdsByTabId[parsed.tabId] ?? []
+      const isOnlyPtyForTab = tabPtyIds.length === 1 && tabPtyIds[0] === session.sessionId
+      if (isOnlyPtyForTab && runtimeMap && Object.keys(runtimeMap).length === 1) {
+        const live = Object.values(runtimeMap)[0]?.trim()
+        if (live) {
+          return live
+        }
+      }
       return tab.defaultTitle?.trim() || tab.title?.trim() || `Terminal ${tabIndex + 1}`
     }
   }

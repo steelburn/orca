@@ -42,6 +42,7 @@ import { ClaudeAccountService } from './claude-accounts/service'
 import { ClaudeRuntimeAuthService } from './claude-accounts/runtime-auth-service'
 import { StarNagService } from './star-nag/service'
 import { agentHookServer } from './agent-hooks/server'
+import { shouldForwardAgentStatusForPaneKey } from './agent-hooks/agent-status-pane-liveness'
 import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
@@ -275,6 +276,16 @@ function openMainWindow(): BrowserWindow {
   mainWindow = window
   agentHookServer.setListener(({ paneKey, tabId, worktreeId, payload }) => {
     if (mainWindow?.isDestroyed()) {
+      return
+    }
+    // Why: renderer tab liveness is too broad for split panes; the main PTY
+    // registry is the source of truth and survives renderer detach/remount.
+    if (
+      !shouldForwardAgentStatusForPaneKey(paneKey, {
+        getPtyIdForPaneKey,
+        clearPaneState: (key) => agentHookServer.clearPaneState(key)
+      })
+    ) {
       return
     }
     mainWindow?.webContents.send('agentStatus:set', {
