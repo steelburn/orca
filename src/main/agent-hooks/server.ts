@@ -22,6 +22,7 @@ import {
   parseFormEncodedBody,
   readRequestBody,
   resolveHookSource,
+  warnOnHookEnvOrVersionMismatch,
   writeEndpointFile,
   type AgentHookEventPayload,
   type HookListenerState
@@ -72,9 +73,19 @@ export class AgentHookServer {
    *  Orca stamps the real value here). The relay has already normalized the
    *  payload via the shared listener module, so we skip re-normalization and
    *  feed the envelope into the same `onAgentStatus` fanout the HTTP path
-   *  uses. See docs/design/agent-status-over-ssh.md §5. */
+   *  uses. The `env`/`version` fields are forwarded verbatim from the agent
+   *  CLI's POST body on the remote and validated here so the warn-once
+   *  cross-build / dev-vs-prod diagnostics fire identically to the local
+   *  HTTP path. See docs/design/agent-status-over-ssh.md §3, §5. */
   ingestRemote(
-    envelope: { paneKey: string; tabId?: string; worktreeId?: string; payload: unknown },
+    envelope: {
+      paneKey: string
+      tabId?: string
+      worktreeId?: string
+      env?: string
+      version?: string
+      payload: unknown
+    },
     connectionId: string
   ): void {
     if (!envelope || typeof envelope.paneKey !== 'string' || envelope.paneKey.length === 0) {
@@ -88,6 +99,14 @@ export class AgentHookServer {
     ) {
       return
     }
+    // Why: run the same warn-once diagnostics the HTTP path runs (cross-build
+    // version mismatch, dev-vs-prod env mismatch). Use `this.env` as the
+    // expected env so the messages match what the local server produces.
+    warnOnHookEnvOrVersionMismatch(this.state, {
+      version: envelope.version,
+      env: envelope.env,
+      expectedEnv: this.env
+    })
     const event: AgentHookEventPayload = {
       paneKey: envelope.paneKey,
       tabId: envelope.tabId,
