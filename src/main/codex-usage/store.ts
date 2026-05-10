@@ -267,7 +267,10 @@ export class CodexUsageStore {
         const worktreeFingerprint = getWorktreeFingerprint(worktreesByRepo)
         const result = await scanCodexUsageFiles(
           createWorktreeRefs(repos, worktreesByRepo),
-          this.state.worktreeFingerprint === worktreeFingerprint ? this.state.processedFiles : []
+          this.state.worktreeFingerprint === worktreeFingerprint ? this.state.processedFiles : [],
+          this.store
+            .getSettings()
+            .codexManagedAccounts.map((account) => join(account.managedHomePath, 'sessions'))
         )
         this.state.processedFiles = result.processedFiles
         this.state.sessions = result.sessions

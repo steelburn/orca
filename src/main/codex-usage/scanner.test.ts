@@ -1,5 +1,39 @@
-import { describe, expect, it } from 'vitest'
-import { attributeCodexUsageEvent, parseCodexUsageRecord } from './scanner'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
+import { afterEach, describe, expect, it } from 'vitest'
+import { attributeCodexUsageEvent, listCodexSessionFiles, parseCodexUsageRecord } from './scanner'
+
+const tempDirs: string[] = []
+
+afterEach(() => {
+  delete process.env.CODEX_HOME
+  for (const dir of tempDirs.splice(0)) {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+describe('listCodexSessionFiles', () => {
+  it('includes managed Codex account session roots alongside the default root', async () => {
+    const defaultHome = mkdtempSync(join(tmpdir(), 'orca-codex-default-'))
+    const managedHome = mkdtempSync(join(tmpdir(), 'orca-codex-managed-'))
+    tempDirs.push(defaultHome, managedHome)
+    const defaultSessions = join(defaultHome, 'sessions')
+    const managedSessions = join(managedHome, 'sessions')
+    mkdirSync(defaultSessions, { recursive: true })
+    mkdirSync(managedSessions, { recursive: true })
+    const defaultFile = join(defaultSessions, 'default.jsonl')
+    const managedFile = join(managedSessions, 'managed.jsonl')
+    writeFileSync(defaultFile, '{}\n', 'utf-8')
+    writeFileSync(managedFile, '{}\n', 'utf-8')
+    process.env.CODEX_HOME = defaultHome
+
+    await expect(listCodexSessionFiles([managedSessions])).resolves.toEqual([
+      defaultFile,
+      managedFile
+    ])
+  })
+})
 
 describe('parseCodexUsageRecord', () => {
   it('uses cumulative totals to avoid double-counting repeated token snapshots', () => {

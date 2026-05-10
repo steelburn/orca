@@ -233,7 +233,19 @@ export class CodexRuntimeHomeService {
     // refresh. Managed sessions must run from their account-owned home so old
     // PTYs on account B cannot race a newly launched account A process through
     // the shared ~/.codex runtime file.
+    this.syncCanonicalConfigIntoManagedHome(activeAccount.managedHomePath)
     return activeAccount.managedHomePath
+  }
+
+  private syncCanonicalConfigIntoManagedHome(managedHomePath: string): void {
+    const canonicalConfigPath = join(homedir(), '.codex', 'config.toml')
+    if (!existsSync(canonicalConfigPath)) {
+      return
+    }
+    writeFileAtomically(
+      join(managedHomePath, 'config.toml'),
+      readFileSync(canonicalConfigPath, 'utf-8')
+    )
   }
 
   private runtimeAuthMatchesAccount(

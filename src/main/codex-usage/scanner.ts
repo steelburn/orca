@@ -112,12 +112,20 @@ export function getCodexSessionsDirectory(): string {
   return DEFAULT_CODEX_SESSIONS_DIR
 }
 
-export async function listCodexSessionFiles(): Promise<string[]> {
-  try {
-    return (await walkJsonlFiles(getCodexSessionsDirectory())).sort()
-  } catch {
-    return []
+export async function listCodexSessionFiles(extraSessionDirs: string[] = []): Promise<string[]> {
+  const sessionDirs = [getCodexSessionsDirectory(), ...extraSessionDirs]
+  const files = new Set<string>()
+  for (const sessionDir of sessionDirs) {
+    try {
+      for (const file of await walkJsonlFiles(sessionDir)) {
+        files.add(file)
+      }
+    } catch {
+      // Missing or unreadable session roots are expected for accounts that have
+      // not launched Codex yet. Keep scanning the remaining roots.
+    }
   }
+  return [...files].sort()
 }
 
 export async function getProcessedFileInfo(filePath: string): Promise<CodexUsageProcessedFile> {
@@ -766,13 +774,14 @@ export async function parseCodexUsageFile(
 
 export async function scanCodexUsageFiles(
   worktrees: CodexUsageWorktreeRef[],
-  previousProcessedFiles: CodexUsagePersistedFile[]
+  previousProcessedFiles: CodexUsagePersistedFile[],
+  extraSessionDirs: string[] = []
 ): Promise<{
   processedFiles: CodexUsagePersistedFile[]
   sessions: CodexUsageSession[]
   dailyAggregates: CodexUsageDailyAggregate[]
 }> {
-  const files = await listCodexSessionFiles()
+  const files = await listCodexSessionFiles(extraSessionDirs)
   const previousByPath = new Map(previousProcessedFiles.map((file) => [file.path, file]))
   const processedFiles: CodexUsagePersistedFile[] = []
   const worktreesWithCanonicalPaths = await buildWorktreesWithCanonicalPaths(worktrees)
