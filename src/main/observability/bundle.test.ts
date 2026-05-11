@@ -6,7 +6,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { collectBundle, generateBundleSubmissionId } from './bundle'
+import { collectBundle, generateBundleSubmissionId, validateUploadUrl } from './bundle'
 
 let dir: string
 let traceFile: string
@@ -175,5 +175,43 @@ describe('bundle — collection', () => {
         orcaChannel: 'dev'
       })
     ).not.toThrow()
+  })
+})
+
+describe('validateUploadUrl', () => {
+  it('allows https upload_url when tokenEndpoint is https', () => {
+    expect(() =>
+      validateUploadUrl('https://api.example.com/upload', 'https://api.example.com/token')
+    ).not.toThrow()
+  })
+
+  it('rejects http upload_url when tokenEndpoint is https (mixed scheme)', () => {
+    expect(() =>
+      validateUploadUrl('http://api.example.com/upload', 'https://api.example.com/token')
+    ).toThrow(/must use https/)
+  })
+
+  it('allows http upload_url when tokenEndpoint is http (localhost dev)', () => {
+    expect(() =>
+      validateUploadUrl('http://localhost:8080/upload', 'http://localhost:8080/token')
+    ).not.toThrow()
+  })
+
+  it('rejects an unparseable upload_url', () => {
+    expect(() => validateUploadUrl('not a url', 'https://api.example.com/token')).toThrow(
+      /invalid upload_url/
+    )
+  })
+
+  it('rejects a mismatched host even when both are https (same-origin pin)', () => {
+    expect(() =>
+      validateUploadUrl('https://attacker.example.com/upload', 'https://api.example.com/token')
+    ).toThrow(/must match tokenEndpoint host/)
+  })
+
+  it('rejects a non-http(s) scheme like file://', () => {
+    expect(() => validateUploadUrl('file:///tmp/upload', 'https://api.example.com/token')).toThrow(
+      /must use https/
+    )
   })
 })

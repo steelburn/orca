@@ -332,12 +332,19 @@ function runBackgroundUpdateCheck(
 
 export function checkForUpdates(): void {
   // Fire-and-forget the span so the public function signature stays
-  // synchronous (callers do not await this). The span ends Success even if
-  // the background check ultimately fails — failure routes through
-  // `sendCheckFailureStatus` which fires its own UI status update; capturing
-  // the eventual outcome here would require threading a promise through
-  // the autoUpdater event handlers.
-  void withUpdaterSpan({ stage: 'check' }, async () => {
+  // synchronous (callers do not await this). The span ALWAYS records
+  // Success — it captures only the launch of the check, not its outcome.
+  // The actual check runs through autoUpdater event handlers; failure is
+  // surfaced via sendCheckFailureStatus on a separate code path.
+  // Dashboards: do not group on this span's outcome attribute — the
+  // success rate here reflects launch dispatch, not check success, and
+  // will read ~100% by construction. Instead, filter on
+  // `updater.outcome === 'launched'` to count check-launch dispatches; the
+  // attribute makes the always-success semantics explicit and queryable
+  // (so a dashboard tile can't accidentally treat this span's success rate
+  // as the actual update-check success rate).
+  void withUpdaterSpan({ stage: 'check' }, async (span) => {
+    span.setAttribute('updater.outcome', 'launched')
     runBackgroundUpdateCheck()
   })
 }

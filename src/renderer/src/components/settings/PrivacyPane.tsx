@@ -70,6 +70,11 @@ export function PrivacyPane(): React.JSX.Element {
   // and we want the pane to refresh whenever the user re-opens Settings, so
   // we re-fetch status on mount rather than trusting a long-lived cache.
   const refreshTokenRef = useRef(0)
+  // Why: the "Copied" indicator auto-resets after 2s. We track the timer so
+  // rapid re-clicks cancel the previous reset (no racing timers flipping the
+  // state back early) and so unmount tears the timer down (no setState on an
+  // unmounted component).
+  const copyTimerRef = useRef<number | null>(null)
 
   const refreshStatus = useCallback(async (): Promise<void> => {
     const token = ++refreshTokenRef.current
@@ -86,6 +91,17 @@ export function PrivacyPane(): React.JSX.Element {
   useEffect(() => {
     void refreshStatus()
   }, [refreshStatus])
+
+  // Why: tear down the "Copied" reset timer if the pane unmounts mid-window
+  // (e.g., user closes Settings within 2s of clicking Copy). Without this,
+  // the timer would fire setCopied on an unmounted component.
+  useEffect(() => {
+    return () => {
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current)
+      }
+    }
+  }, [])
 
   const handleOpenFolder = useCallback(async (): Promise<void> => {
     try {
@@ -147,7 +163,13 @@ export function PrivacyPane(): React.JSX.Element {
     try {
       await navigator.clipboard.writeText(preview.ticketId)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 2_000)
+      if (copyTimerRef.current !== null) {
+        window.clearTimeout(copyTimerRef.current)
+      }
+      copyTimerRef.current = window.setTimeout(() => {
+        copyTimerRef.current = null
+        setCopied(false)
+      }, 2_000)
     } catch {
       toast.error('Could not copy ticket ID')
     }
@@ -324,13 +346,14 @@ function BundlePreview({
   return (
     <div className="rounded border border-border/60 bg-card/40 p-3">
       <div className="mb-2 flex items-center justify-between">
-        <Label className="text-xs">
+        <Label htmlFor="diagnostics-bundle-preview" className="text-xs">
           Bundle preview · {state.bundle.spanCount} span(s) ·{' '}
           {Math.round(state.bundle.bytes / 1024)} KB
         </Label>
         <span className="text-xs text-muted-foreground">ID: {state.bundle.bundleSubmissionId}</span>
       </div>
       <textarea
+        id="diagnostics-bundle-preview"
         className="h-72 w-full resize-y rounded border border-border/60 bg-background p-2 font-mono text-[11px] leading-tight"
         value={state.editedPayload}
         readOnly={uploading}

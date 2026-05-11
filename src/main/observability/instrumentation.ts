@@ -21,7 +21,7 @@
 // itself becomes a `noopSpan` that swallows all calls — call sites do not
 // need to branch on whether tracing is on.
 
-import { withSpan } from './tracer'
+import { withSpan, type ActiveSpan } from './tracer'
 
 export type GitSpanArgs = {
   readonly args: readonly string[]
@@ -41,17 +41,7 @@ export async function withGitSpan<T>(meta: GitSpanArgs, fn: () => Promise<T>): P
       if (meta.cwd) {
         span.setAttribute('cwd', meta.cwd)
       }
-      const start = Date.now()
-      try {
-        const out = await fn()
-        span.setAttribute('git.duration_ms', Date.now() - start)
-        return out
-      } catch (err) {
-        // The throw propagates after `withSpan` records the Failure exit;
-        // we just decorate with the subcommand metadata before that.
-        span.setAttribute('git.duration_ms', Date.now() - start)
-        throw err
-      }
+      return await fn()
     },
     { attributes: { kind: 'git' } }
   )
@@ -172,13 +162,13 @@ export type UpdaterSpanArgs = {
 
 export async function withUpdaterSpan<T>(
   meta: UpdaterSpanArgs,
-  fn: () => Promise<T> | T
+  fn: (span: ActiveSpan) => Promise<T> | T
 ): Promise<T> {
   return withSpan(
     `updater.${meta.stage}`,
     async (span) => {
       span.setAttribute('updater.stage', meta.stage)
-      return await fn()
+      return await fn(span)
     },
     { attributes: { kind: 'updater' } }
   )

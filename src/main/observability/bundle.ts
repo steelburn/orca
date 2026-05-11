@@ -97,8 +97,15 @@ export function collectBundle(opts: CollectBundleOptions): CollectedBundle {
     schema_version: 1
   }
 
-  const lines: string[] = [JSON.stringify({ type: 'bundle-header', ...header })]
+  const headerLine = JSON.stringify({ type: 'bundle-header', ...header })
+  const lines: string[] = [headerLine]
   let spanCount = 0
+  // Running byte counter for the eventual `lines.join('\n')` payload.
+  // Starts with the header's byte length; each pushed line adds its own
+  // length plus 1 for the newline separator that will join it. Avoids
+  // re-running `lines.join('\n').length` every iteration — that's O(N²)
+  // in span count and dominates collection time for large backlogs (F5).
+  let currentBytes = Buffer.byteLength(headerLine)
 
   // Files from listRotatedFiles are newest → oldest. Reading newest first
   // means the cutoff filter naturally bounds our work — once we hit a span
@@ -156,10 +163,15 @@ export function collectBundle(opts: CollectBundleOptions): CollectedBundle {
       const redacted = redactString(raw)
       lines.push(redacted)
       spanCount += 1
-      if (lines.join('\n').length > MAX_BUNDLE_BYTES * 2) {
-        // Hard ceiling. We won't ship more than this even if the user has a
-        // huge backlog — the upload cap is 10 MB and assembling 100 MB just
-        // to chop it would waste memory.
+      // +1 accounts for the '\n' that `lines.join('\n')` will insert before
+      // this line in the final payload.
+      currentBytes += Buffer.byteLength(redacted) + 1
+      if (currentBytes > MAX_BUNDLE_BYTES) {
+        // Hard ceiling at the same 10 MB the upload endpoint enforces (F4).
+        // Previously we collected up to 20 MB so the user could preview a
+        // bundle the server would reject — confusing UX. Now the preview
+        // matches what'll actually ship; the trailing '\n' added at payload
+        // assembly is a single byte of slack absorbed by the cap.
         break outer
       }
     }
@@ -233,6 +245,14 @@ export async function uploadBundle(opts: UploadBundleOptions): Promise<UploadBun
     throw new Error(`bundle exceeds server-issued cap (${bytes} > ${tokenRes.max_bytes})`)
   }
 
+  // Validate `upload_url` BEFORE we send the bearer token + user data to it.
+  // A misconfigured or compromised token endpoint could otherwise redirect
+  // the upload (with the bearer token and the user's NDJSON payload) to an
+  // attacker-controlled host. We require https in production and only relax
+  // to http when the configured tokenEndpoint is itself non-https — i.e.
+  // localhost dev. (F2 in the security review.)
+  validateUploadUrl(tokenRes.upload_url, opts.tokenEndpoint)
+
   // (2) Upload using the bearer token. `Content-Type: application/x-ndjson`
   // matches the §Endpoint contract item 4 allow-list. The server rejects
   // any other content-type at the edge.
@@ -270,6 +290,62 @@ export function generateBundleSubmissionId(): string {
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '')
+}
+
+// ── Upload URL validation ────────────────────────────────────────────────
+
+/**
+ * Reject an `upload_url` returned by the token endpoint that we can't safely
+ * POST a bearer token + the user's diagnostic payload to. Exists because the
+ * upload destination is chosen by the server response, not pinned at build
+ * time — without this gate, a misconfigured or compromised token endpoint
+ * could exfiltrate bundles to an attacker-controlled host. (F2.)
+ *
+ * Rules:
+ *  - Must parse as a URL.
+ *  - Must use https:, EXCEPT when the configured `tokenEndpoint` is itself
+ *    non-https (localhost / dev). Mixing http upload with https token
+ *    issuance is never allowed in production.
+ *  - Host must match the configured `tokenEndpoint` host. This is the
+ *    same-origin pin from the F2 fix: even if the scheme is https, a
+ *    compromised or misconfigured token endpoint could otherwise direct
+ *    the upload to an attacker-controlled HTTPS host that has a valid
+ *    certificate. Pinning to the token endpoint's host means the bearer
+ *    token + user payload only ever go to the host the user already
+ *    trusted enough to ask for a token from.
+ */
+export function validateUploadUrl(uploadUrl: string, tokenEndpoint: string): void {
+  let parsedUpload: URL
+  try {
+    parsedUpload = new URL(uploadUrl)
+  } catch {
+    throw new Error(`invalid upload_url from token endpoint: ${uploadUrl}`)
+  }
+  let parsedToken: URL
+  try {
+    parsedToken = new URL(tokenEndpoint)
+  } catch {
+    throw new Error(`invalid tokenEndpoint configuration: ${tokenEndpoint}`)
+  }
+  const tokenIsHttps = parsedToken.protocol === 'https:'
+  if (tokenIsHttps && parsedUpload.protocol !== 'https:') {
+    throw new Error(
+      `upload_url must use https when tokenEndpoint is https (got ${parsedUpload.protocol}//${parsedUpload.host})`
+    )
+  }
+  if (parsedUpload.protocol !== 'https:' && parsedUpload.protocol !== 'http:') {
+    throw new Error(`upload_url must use http(s) (got ${parsedUpload.protocol})`)
+  }
+  // Same-origin host pin. Defends against a compromised token endpoint that
+  // returns a valid-https upload_url pointing at an attacker-controlled host
+  // (a certificate alone proves nothing about who the operator is). We only
+  // ship the bearer token + user payload to the host the user already
+  // trusted by virtue of the configured tokenEndpoint.
+  if (parsedUpload.host !== parsedToken.host) {
+    throw new Error(
+      `upload_url host (${parsedUpload.host}) must match tokenEndpoint host (${parsedToken.host})`
+    )
+  }
 }
 
 // ── HTTP helpers ─────────────────────────────────────────────────────────

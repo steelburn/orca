@@ -112,10 +112,6 @@ export function createLocalFileSink(opts: LocalFileSinkOptions): LocalFileSink {
       if (!existsSync(src)) {
         continue
       }
-      // Drop the oldest if it has reached the cap.
-      if (i === maxFiles - 1 && existsSync(`${filePath}.${maxFiles - 1}`) === false) {
-        // no-op: nothing at the would-be final slot
-      }
       try {
         if (existsSync(dst)) {
           // The destination shouldn't exist after a clean rotation, but if
@@ -152,6 +148,12 @@ export function createLocalFileSink(opts: LocalFileSinkOptions): LocalFileSink {
       // Reopen and re-buffer once. If the second write also fails, drop the
       // chunk on the floor — the error-tracking lane must never crash main.
       try {
+        // Best-effort close of the prior fd to prevent fd-leak on transient errors.
+        try {
+          closeSync(fd)
+        } catch {
+          /* swallow — best effort */
+        }
         fd = openAppend(filePath)
         writeSync(fd, chunk)
         currentBytes = safeFstatSize(fd)

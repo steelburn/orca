@@ -29,14 +29,13 @@
 // punching a hole in the architecture is trivially worth it.
 
 import { app } from 'electron'
-import { statSync } from 'node:fs'
 import { homedir, platform } from 'node:os'
 import { join } from 'node:path'
 import {
   clearRotatedFamily,
   createLocalFileSink,
   DEFAULT_MAX_FILES,
-  listRotatedFiles,
+  getRotatedFamilySize,
   type LocalFileSink
 } from './local-file-sink'
 import {
@@ -170,18 +169,6 @@ export function getTraceFilePath(): string {
   return join(userData, 'logs', 'main.trace.ndjson')
 }
 
-function sumFamilySize(traceFilePath: string): number {
-  let total = 0
-  for (const path of listRotatedFiles(traceFilePath)) {
-    try {
-      total += statSync(path).size
-    } catch {
-      /* ignore */
-    }
-  }
-  return total
-}
-
 // ── Module-level state ───────────────────────────────────────────────────
 
 let sink: LocalFileSink | null = null
@@ -236,10 +223,26 @@ function makeCompositeSink(localSink: LocalFileSink, exporter: OtlpExporter | nu
         /* */
       }
       if (exporter) {
+        // Fire-and-forget flush before close — prevents queued-span loss when
+        // callers invoke close() without separately awaiting flush(). Same
+        // fire-and-forget pattern documented above in flush().
+        void exporter.flush()
         exporter.close()
       }
     }
   }
+}
+
+/** Create the local file sink, install the composite (local + optional OTLP)
+ *  as the active tracer sink, and update module-level `sink`. The OTLP
+ *  exporter is reused from the current module-level `otlp` reference — only
+ *  the local sink is recreated. Used by both `initObservability` (where
+ *  `otlp` is freshly created) and `clearLocalTraces` (where `otlp` is
+ *  already running and must be preserved across the sink swap). */
+function installLocalSink(): void {
+  const localSink = createLocalFileSink({ filePath: getTraceFilePath() })
+  sink = localSink
+  setActiveSink(makeCompositeSink(localSink, otlp))
 }
 
 export function initObservability(): ObservabilityConsent {
@@ -250,10 +253,8 @@ export function initObservability(): ObservabilityConsent {
     // tracer's active sink unset, so all spans are no-ops.
     return c
   }
-  const localSink = createLocalFileSink({ filePath: getTraceFilePath() })
-  sink = localSink
   otlp = c.otlpEnabled ? createOtlpExporterFromEnv() : null
-  setActiveSink(makeCompositeSink(localSink, otlp))
+  installLocalSink()
   return c
 }
 
@@ -296,7 +297,7 @@ export type DiagnosticsStatus = {
 export function getDiagnosticsStatus(): DiagnosticsStatus {
   const c = consent ?? resolveObservabilityConsent()
   const traceFilePath = getTraceFilePath()
-  const traceFamilySize = c.localFileEnabled ? sumFamilySize(traceFilePath) : 0
+  const traceFamilySize = c.localFileEnabled ? getRotatedFamilySize(traceFilePath) : 0
   return {
     localFileEnabled: c.localFileEnabled,
     otlpEnabled: c.otlpEnabled,
@@ -308,14 +309,31 @@ export function getDiagnosticsStatus(): DiagnosticsStatus {
   }
 }
 
-/** Wrapper around `local-file-sink.clearRotatedFamily` that flushes the
- *  active sink first so an in-flight buffer doesn't immediately recreate a
- *  cleared file. */
+/** Wrapper around `local-file-sink.clearRotatedFamily` that fully tears down
+ *  and rebuilds the active sink around the unlink.
+ *
+ *  Why the close-then-unlink-then-recreate dance:
+ *  The local file sink holds an open fd from `openSync(filePath, 'a')`. If we
+ *  unlink while that fd is still open, two bad things happen:
+ *    - POSIX: the kernel keeps the inode alive as long as the fd is open, so
+ *      subsequent `writeSync` calls land in an orphaned inode invisible to
+ *      the user but still consuming disk until the process exits.
+ *    - Windows: `unlinkSync` on the active file fails with EBUSY (silently
+ *      swallowed inside `clearRotatedFamily`), so the active file is NOT
+ *      cleared — the user clicks "Clear" and nothing happens.
+ *  Both failures are silent. The fix is to fully close the sink (which
+ *  flushes and releases the fd) before unlinking, then recreate the sink so
+ *  a fresh fd points at a brand-new empty file. The OTLP exporter is left
+ *  running across the swap. */
 export function clearLocalTraces(): void {
   if (sink) {
-    sink.flush()
+    sink.close()
+    sink = null
   }
   clearRotatedFamily(getTraceFilePath())
+  if (consent?.localFileEnabled) {
+    installLocalSink()
+  }
 }
 
 /** Collect a bundle from the live trace folder. The `appVersion` /
@@ -342,8 +360,6 @@ export function collectDiagnosticBundle(
     ...meta
   })
 }
-
-export type UploadEndpointFn = () => string | null
 
 /** Upload a (possibly-edited) bundle payload. Returns the ticket ID on
  *  success; throws on any of the failure modes documented in `bundle.ts`. */

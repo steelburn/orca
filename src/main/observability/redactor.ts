@@ -96,7 +96,13 @@ const URL_USERINFO = /(https?:\/\/)([^/@\s]+)@/g
 // dump, etc.). The pattern intentionally requires the equals sign on the
 // same line — `FOO=\n  bar` is a different pattern (continuation) and not
 // commonly how secrets show up.
-const ENV_LINE = /^\s*([A-Z_][A-Z0-9_]*)\s*=\s*\S+/gm
+//
+// The value pattern (`\S.*`) consumes to end of line so multi-token values
+// like `FOO_TOKEN=Bearer <jwt>` are redacted whole rather than leaking the
+// trailing token. The leading `\S` requires the value to start with a
+// non-whitespace char so a bare `FOO=` followed by nothing on the same
+// line doesn't get an empty redact-token.
+const ENV_LINE = /^\s*([A-Z_][A-Z0-9_]*)\s*=\s*\S.*/gm
 
 // Attribute keys that must never carry through, regardless of value. Match
 // is case-insensitive — HTTP headers vary in case and we want all forms.

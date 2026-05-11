@@ -89,6 +89,14 @@ export function registerDiagnosticsHandlers(): void {
   ipcMain.handle(
     'diagnostics:collectBundle',
     (_event, lookbackMinutesIn: unknown): CollectedBundle => {
+      // Consent gate: main is the consent enforcement boundary; the
+      // renderer-side button-hide is UX, not security. A compromised or
+      // malicious renderer must not be able to assemble a bundle when the
+      // user has disabled diagnostic-bundle collection in Settings → Privacy.
+      const status = getDiagnosticsStatus()
+      if (!status.bundleEnabled) {
+        throw new Error('diagnostic bundle collection is disabled')
+      }
       // Renderer-controlled input → narrow at the boundary. The default
       // (DEFAULT_LOOKBACK_MINUTES in bundle.ts) is fine for the common
       // "last 30 minutes" case the Privacy pane button triggers.
@@ -115,8 +123,32 @@ export function registerDiagnosticsHandlers(): void {
       if (typeof payload !== 'string') {
         throw new Error('payload must be a string')
       }
-      if (typeof bundleSubmissionId !== 'string' || bundleSubmissionId.length === 0) {
-        throw new Error('bundleSubmissionId must be a non-empty string')
+      // Format must match `generateBundleSubmissionId()` in bundle.ts (22-char
+      // base64url today; allow a small range for forward compatibility).
+      // Accepting arbitrary renderer-minted IDs is a structural break — the
+      // submission-id is the dedup key on the server side.
+      if (
+        typeof bundleSubmissionId !== 'string' ||
+        !/^[A-Za-z0-9_-]{16,64}$/.test(bundleSubmissionId)
+      ) {
+        throw new Error('bundleSubmissionId has invalid format')
+      }
+      // Defense-in-depth payload size cap at the IPC boundary. `uploadBundle()`
+      // also enforces MAX_BUNDLE_BYTES, but only AFTER the renderer has
+      // already serialized + cloned the string through IPC — a 1 GB payload
+      // would OOM main before the inner check runs. 12 MB is tighter than
+      // the IPC pipe limit but looser than the upload-side rejection so the
+      // inner check stays the source of truth for the user-visible error.
+      const MAX_IPC_PAYLOAD_BYTES = 12 * 1024 * 1024
+      if (Buffer.byteLength(payload, 'utf8') > MAX_IPC_PAYLOAD_BYTES) {
+        throw new Error('payload exceeds IPC size limit')
+      }
+      // Consent gate: main is the consent enforcement boundary; the
+      // renderer-side button-hide is UX, not security. Re-check here in case
+      // the user toggled the setting off between collect and upload.
+      const status = getDiagnosticsStatus()
+      if (!status.bundleEnabled) {
+        throw new Error('diagnostic bundle collection is disabled')
       }
       const tokenEndpoint = resolveTokenEndpoint()
       if (!tokenEndpoint) {

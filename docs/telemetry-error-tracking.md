@@ -104,7 +104,7 @@ A user who wants to debug their own Orca usage — or a developer on the Orca te
 
 ```
 ORCA_OTLP_TRACES_URL=http://localhost:4318/v1/traces
-ORCA_OTLP_METRICS_URL=http://localhost:4318/v1/metrics
+ORCA_OTLP_METRICS_URL=http://localhost:4318/v1/metrics    # reserved for v2 — traces only in v1
 ORCA_OTLP_SERVICE_NAME=orca-desktop-myname
 ```
 
@@ -116,7 +116,7 @@ Important: **no Orca-operated OTLP endpoint.** The env var contract is deliberat
 
 The only user-initiated network path from this lane back to Orca. A button in Settings → Privacy → Diagnostics labeled "Share a diagnostic bundle with Orca support":
 
-1. User clicks the button. The main process collects the last N minutes of trace NDJSON, the current app version, platform, and a fresh `bundle_submission_id` (128-bit random, generated per bundle — **not** the PostHog `install_id`). See "Why bundles do not carry `install_id`" below.
+1. User clicks the button. The main process collects the last N minutes of trace NDJSON, the current app version, platform/arch/OS release, build channel, collection timestamp, and a fresh `bundle_submission_id` (128-bit random, generated per bundle — **not** the PostHog `install_id`). See "Why bundles do not carry `install_id`" below.
 2. Runs the redactor (see [The redactor](#the-redactor), rules 1–5) a second time over the collected bundle — belt-and-suspenders with the sink-write pass.
 3. Opens a local preview window: the user can see exactly what will be sent as plain text. They can copy, edit, or cancel.
 4. On confirm, the client requests a **short-lived upload token** from the Orca auth endpoint (see Endpoint contract below), then uploads the bundle to the ingest endpoint using that token.
@@ -146,7 +146,7 @@ Two endpoints, both fronted by the same edge (Cloudflare / API gateway):
 7. **Server-side redaction on ingest.** The ingest worker runs the same redactor rules 1–5 as the client before writing to storage. The client-side redactor runs on an attacker-controllable binary; server-side redaction is the guarantee. An optional secret-shape scanner flags bundles with likely-unredacted provider keys for manual review — this is defense-in-depth against a bug in the redactor itself.
 8. **Retention and deletion.** Bundles are retained 30 days, then auto-deleted. A `POST /diagnostics/delete/:ticket_id` endpoint (rate-limited to 10 per IP per hour, no auth required beyond the ticket ID) deletes on demand within 7 days. The app surfaces the delete action in the Privacy pane alongside the ticket ID.
 9. **No authenticated user identity.** Deliberate. The token + ticket ID model is the entire auth story; tying the bundle to a login would undo the "we don't collect identity" promise and break the anonymous `install_id` design.
-10. **No renderer access to any of these endpoints.** The main process is the only caller. The renderer triggers the flow via `window.api.diagnosticsShareBundle()` and receives a ticket ID back; the HTTP work stays in main. A compromised renderer can initiate a bundle share (which requires the user to click through the preview), but cannot silently POST to the ingest endpoint.
+10. **No renderer access to any of these endpoints.** The main process is the only caller. The renderer triggers the flow via the `window.api.diagnostics.*` IPC namespace (see `src/preload/api-types.ts`); the HTTP work stays in main. A compromised renderer can initiate a bundle share (which requires the user to click through the preview), but cannot silently POST to the ingest endpoint.
 
 **Open items that do not block the spec:** decision on ingest cloud provider (Cloudflare R2 vs S3), admin-tool implementation, and the exact edge rate-limit platform. All are operational choices that inherit from the hardening list; the contract above constrains the implementation enough that any reasonable cloud stack satisfies it.
 
@@ -164,15 +164,20 @@ Mirrors the product-telemetry main-process layout so the two lanes are symmetric
 
 ```
 src/main/telemetry/
-  client.ts              # existing PostHog wrapper
-  events.ts              # existing typed event map
+  client.ts              # PostHog wrapper
+  validator.ts           # typed event map + runtime sanitizer
+  burst-cap.ts           # per-event burst limiter
+  consent.ts             # consent + kill-switch resolution
+  install-id.ts          # anonymous install identifier
 
 src/main/observability/   # NEW — the error-tracking lane
-  tracer.ts              # Effect Tracer wiring for spans
+  index.ts               # composition root (init / shutdown / consent)
+  tracer.ts              # span recorder modeled on T3 Code's TraceSink
   local-file-sink.ts     # NDJSON writer with rotation
   otlp-exporter.ts       # optional OTLP exporter, gated on env var
   redactor.ts            # secrets scrubber run on every span before sink write
   bundle.ts              # diagnostic-bundle collection + preview + upload
+  instrumentation.ts     # withGitSpan / withWorktreeSpan / etc helpers
 ```
 
 Two hard rules, enforced in review:
