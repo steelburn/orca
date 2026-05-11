@@ -234,12 +234,11 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
           // it when a new turn starts (working → Stop reprices it).
           interrupted: payload.interrupted
         }
-        // Why: `agentStatusEpoch` bumps on every update because visual +
-        // freshness selectors (WorktreeCard status, hover content) care about
-        // tool-name/prompt/assistant-message churn within a turn. `sortEpoch`,
-        // on the other hand, bumps only when sort-relevant inputs change —
-        // avoiding sidebar re-sorts on every tool/prompt event would stress
-        // the smart-sort debounce for no reason. Sort-relevant inputs are:
+        // Why: broad freshness-aware subscribers only need a global tick when
+        // an entry appears, changes state, or crosses stale->fresh. Same-state
+        // tool/prompt pings still update agentStatusByPaneKey for the owning
+        // row, but they must not fan out through dashboard/sidebar aggregate
+        // work across every card. Sort-relevant inputs are:
         //   1. `state` transitions — sort score is a function of state.
         //   2. Freshness transitions (stale → fresh) — `computeSmartScoreFromSignals`
         //      in smart-sort.ts filters entries through
@@ -269,7 +268,7 @@ export const createAgentStatusSlice: StateCreator<AppState, [], [], AgentStatusS
         return {
           agentStatusByPaneKey: { ...s.agentStatusByPaneKey, [paneKey]: entry },
           retentionSuppressedPaneKeys: nextRetentionSuppressedPaneKeys,
-          agentStatusEpoch: s.agentStatusEpoch + 1,
+          agentStatusEpoch: sortRelevantChange ? s.agentStatusEpoch + 1 : s.agentStatusEpoch,
           sortEpoch: sortRelevantChange ? s.sortEpoch + 1 : s.sortEpoch
         }
       })

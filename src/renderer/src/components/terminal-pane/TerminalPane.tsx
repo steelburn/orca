@@ -36,6 +36,7 @@ import {
 } from '@/lib/pane-manager/mobile-fit-overrides'
 import { getDriverForPty, onDriverChange } from '@/lib/pane-manager/mobile-driver-state'
 import { safeFit } from '@/lib/pane-manager/pane-tree-ops'
+import { flushTerminalOutput } from '@/lib/pane-manager/pane-terminal-output-scheduler'
 
 // Why: registry lives in a leaf module so the store slice can import it
 // without re-entering the `slice → TerminalPane → store → slice` cycle
@@ -834,12 +835,12 @@ export default function TerminalPane({
       if (panes.length === 0) {
         return
       }
-      // No renderer-side pending writes to flush — PTY output writes live
-      // into xterm regardless of visibility, so the SerializeAddon already
-      // sees the freshest possible state at this point.
       const buffers: Record<string, string> = {}
       for (const pane of panes) {
         try {
+          // Why: non-focused panes may have renderer-throttled PTY bytes queued;
+          // push them into xterm before taking the shutdown scrollback snapshot.
+          flushTerminalOutput(pane.terminal)
           const leafId = paneLeafId(pane.id)
           let scrollback = pane.terminal.options.scrollback ?? 10_000
           let serialized = pane.serializeAddon.serialize({ scrollback })

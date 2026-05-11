@@ -147,6 +147,50 @@ describe('agent status tool + assistant fields', () => {
       .setAgentStatus('tab-1:1', { state: 'working', prompt: 'p2', agentType: 'cursor' })
     expect(store.getState().agentStatusByPaneKey['tab-1:1'].agentType).toBe('cursor')
   })
+
+  it('keeps global epochs stable for fresh same-state pings while updating the entry', () => {
+    vi.useFakeTimers()
+    const store = createTestStore()
+    store
+      .getState()
+      .setAgentStatus(
+        'tab-1:1',
+        { state: 'working', prompt: 'p1', agentType: 'claude', toolName: 'Read' },
+        'claude',
+        { updatedAt: 1_000, stateStartedAt: 1_000 }
+      )
+    const firstEpoch = store.getState().agentStatusEpoch
+    const firstSortEpoch = store.getState().sortEpoch
+
+    store
+      .getState()
+      .setAgentStatus(
+        'tab-1:1',
+        { state: 'working', prompt: 'p2', agentType: 'claude', toolName: 'Edit' },
+        'claude',
+        { updatedAt: 2_000, stateStartedAt: 1_000 }
+      )
+
+    const sameStateEntry = store.getState().agentStatusByPaneKey['tab-1:1']
+    expect(sameStateEntry.prompt).toBe('p2')
+    expect(sameStateEntry.toolName).toBe('Edit')
+    expect(sameStateEntry.updatedAt).toBe(2_000)
+    // Why: same-state hook pings are high-frequency and already update the
+    // owning row through agentStatusByPaneKey. The global epochs are reserved
+    // for state/freshness changes that can affect aggregate dashboard/sidebar
+    // calculations.
+    expect(store.getState().agentStatusEpoch).toBe(firstEpoch)
+    expect(store.getState().sortEpoch).toBe(firstSortEpoch)
+
+    store
+      .getState()
+      .setAgentStatus('tab-1:1', { state: 'done', prompt: 'p2', agentType: 'claude' }, 'claude', {
+        updatedAt: 3_000,
+        stateStartedAt: 3_000
+      })
+    expect(store.getState().agentStatusEpoch).toBe(firstEpoch + 1)
+    expect(store.getState().sortEpoch).toBe(firstSortEpoch + 1)
+  })
 })
 
 describe('agent status stateStartedAt', () => {

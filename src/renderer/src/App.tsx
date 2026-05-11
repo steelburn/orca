@@ -916,9 +916,8 @@ function App(): React.JSX.Element {
       }
     >
       <TooltipProvider delayDuration={400}>
-        {/* Why: leaf-mounted retention sync — hosting useDashboardData() +
-            useRetainedAgentsSync() inside a null-rendering leaf keeps their
-            high-churn store subscriptions from re-rendering the App tree. */}
+        {/* Why: leaf-mounted retention sync keeps agent-status retention
+            subscriptions from re-rendering the App tree. */}
         <RetainedAgentsSyncGate />
         <div className="flex flex-row flex-1 min-h-0 overflow-hidden">
           {/* Why: the non-workspace titlebar lives inside this left+center
