@@ -64,4 +64,36 @@ describe('getRuntimeMobileSessionSyncKey', () => {
 
     expect(reordered).not.toBe(getRuntimeMobileSessionSyncKey(base))
   })
+
+  it('changes when terminal split-pane layout changes', () => {
+    const base = makeState({
+      terminalLayoutsByTabId: {
+        'term-1': {
+          root: { type: 'leaf', leafId: 'pane:1' },
+          activeLeafId: 'pane:1',
+          expandedLeafId: null
+        }
+      }
+    })
+
+    const split = getRuntimeMobileSessionSyncKey(
+      makeState({
+        ...base,
+        terminalLayoutsByTabId: {
+          'term-1': {
+            root: {
+              type: 'split',
+              direction: 'horizontal',
+              first: { type: 'leaf', leafId: 'pane:1' },
+              second: { type: 'leaf', leafId: 'pane:2' }
+            },
+            activeLeafId: 'pane:2',
+            expandedLeafId: null
+          }
+        }
+      })
+    )
+
+    expect(split).not.toBe(getRuntimeMobileSessionSyncKey(base))
+  })
 })

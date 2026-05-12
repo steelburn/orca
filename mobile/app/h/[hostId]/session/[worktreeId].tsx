@@ -68,7 +68,10 @@ type MobileSessionTab =
       type: 'terminal'
       id: string
       title: string
-      terminal: string
+      parentTabId?: string
+      leafId?: string
+      status?: 'pending-handle' | 'ready'
+      terminal: string | null
       isActive: boolean
     }
   | {
@@ -94,6 +97,7 @@ type MobileSessionTab =
 
 type SessionTabsResult = {
   worktree: string
+  publicationEpoch?: string
   snapshotVersion: number
   tabs: MobileSessionTab[]
   activeTabId: string | null
@@ -127,34 +131,6 @@ type DirtyMarkdownDraft = {
   content: string
 }
 
-function mergeTerminalFallbackTabs(
-  tabs: MobileSessionTab[],
-  terminals: Terminal[],
-  activeHandle: string | null
-): MobileSessionTab[] {
-  const terminalTabs = tabs.filter(
-    (tab): tab is Extract<MobileSessionTab, { type: 'terminal' }> => tab.type === 'terminal'
-  )
-  if (terminals.length === 0) {
-    return tabs
-  }
-  const terminalTabsByHandle = new Map(terminalTabs.map((tab) => [tab.terminal, tab]))
-  const terminalHandles = new Set(terminals.map((terminal) => terminal.handle))
-  const orderedTerminalTabs = terminals.map(
-    (terminal) =>
-      terminalTabsByHandle.get(terminal.handle) ?? {
-        type: 'terminal' as const,
-        id: terminal.handle,
-        title: terminal.title,
-        terminal: terminal.handle,
-        isActive: terminal.handle === activeHandle
-      }
-  )
-  const sessionOnlyTerminalTabs = terminalTabs.filter((tab) => !terminalHandles.has(tab.terminal))
-  const nonTerminalTabs = tabs.filter((tab) => tab.type !== 'terminal')
-  return [...orderedTerminalTabs, ...sessionOnlyTerminalTabs, ...nonTerminalTabs]
-}
-
 function mergeTerminalRecordsByCurrentOrder(
   terminalTabs: Terminal[],
   currentTerminals: Terminal[]
@@ -186,10 +162,7 @@ function getActiveTabIdForHandle(
 }
 
 type TerminalCreateResult = {
-  terminal: {
-    handle: string
-    title: string | null
-  }
+  tab: Extract<MobileSessionTab, { type: 'terminal' }>
 }
 
 type MobileDisplayMode = 'auto' | 'phone' | 'desktop'
@@ -893,8 +866,6 @@ export default function SessionScreen() {
             }
           }
           lastKnownTerminalCountRef.current = result.terminals.length
-          const current = activeHandleRef.current
-
           // Why: defense-in-depth dedupe. If the server ever returns a list
           // with the same handle twice (race during rename/split, or stale
           // process tracking), React would throw 'two children with same
@@ -909,23 +880,9 @@ export default function SessionScreen() {
 
           setTerminals(deduped)
           terminalsRef.current = deduped
-          setTerminalsLoaded(true)
 
-          if (activeSessionTabTypeRef.current !== 'terminal') {
-            return
-          }
-
-          if (!current || !result.terminals.some((t) => t.handle === current)) {
-            const active = result.terminals.find((t) => t.isActive) ?? result.terminals[0]
-            if (active) {
-              activeHandleRef.current = active.handle
-              setActiveHandle(active.handle)
-              subscribeToTerminal(active.handle)
-            } else {
-              activeHandleRef.current = null
-              setActiveHandle(null)
-            }
-          }
+          // Session tabs are the UI authority. terminal.list only refreshes
+          // per-handle metadata for existing ready terminal surfaces.
         }
       } catch {
         // Failed to list terminals
@@ -959,15 +916,12 @@ export default function SessionScreen() {
         nextTabs = [...orphanedDraftTabs, ...nextTabs]
       }
       setSessionTabs(nextTabs)
-      const terminalTabs = nextTabs
-        .filter(
-          (tab): tab is Extract<MobileSessionTab, { type: 'terminal' }> => tab.type === 'terminal'
-        )
-        .map((tab) => ({
-          handle: tab.terminal,
-          title: tab.title || 'Terminal',
-          isActive: tab.isActive
-        }))
+      const terminalTabs = nextTabs.flatMap((tab): Terminal[] => {
+        if (tab.type !== 'terminal' || typeof tab.terminal !== 'string') {
+          return []
+        }
+        return [{ handle: tab.terminal, title: tab.title || 'Terminal', isActive: tab.isActive }]
+      })
       const mergedTerminalsForActive = mergeTerminalRecordsByCurrentOrder(
         terminalTabs,
         terminalsRef.current
@@ -978,9 +932,7 @@ export default function SessionScreen() {
         lastKnownTerminalCountRef.current,
         terminalTabs.length
       )
-      if (nextTabs.length > 0) {
-        setTerminalsLoaded(true)
-      }
+      setTerminalsLoaded(true)
 
       const snapshotActive = nextTabs.find((tab) => tab.isActive) ?? nextTabs[0] ?? null
       const pendingActiveSessionTabId = pendingActiveSessionTabIdRef.current
@@ -1028,24 +980,19 @@ export default function SessionScreen() {
           pendingActiveTerminalHandleRef.current = null
         }
       }
-      const currentHandle = activeHandleRef.current
-      if (
-        currentHandle &&
-        activeSessionTabTypeRef.current === 'terminal' &&
-        !nextTabs.some((tab) => tab.type === 'terminal' && tab.terminal === currentHandle) &&
-        mergedTerminalsForActive.some((terminal) => terminal.handle === currentHandle)
-      ) {
-        // Why: the renderer session snapshot can be partial while a new
-        // worktree is still creating its setup/agent terminals. Keep the
-        // terminal.list-backed active PTY visible until the snapshot catches up.
-        setActiveSessionTabId(getActiveTabIdForHandle(nextTabs, currentHandle))
-        setActiveHandle(currentHandle)
-        subscribeToTerminal(currentHandle)
-        return
-      }
       activeSessionTabTypeRef.current = active?.type ?? null
       setActiveSessionTabId(active?.id ?? null)
       if (active?.type === 'terminal') {
+        if (typeof active.terminal !== 'string') {
+          const previous = activeHandleRef.current
+          if (previous) {
+            unsubscribeTerminal(previous)
+            initializedHandlesRef.current.delete(previous)
+          }
+          activeHandleRef.current = null
+          setActiveHandle(null)
+          return
+        }
         const previous = activeHandleRef.current
         if (previous && previous !== active.terminal) {
           unsubscribeTerminal(previous)
@@ -1609,7 +1556,30 @@ export default function SessionScreen() {
   const switchSessionTab = useCallback(
     (tab: MobileSessionTab) => {
       if (tab.type === 'terminal') {
-        switchTab(tab.terminal)
+        if (typeof tab.terminal === 'string') {
+          switchTab(tab.terminal)
+          return
+        }
+        triggerSelection()
+        pendingActiveSessionTabIdRef.current = tab.id
+        pendingActiveTerminalHandleRef.current = null
+        activeSessionTabTypeRef.current = 'terminal'
+        setActiveSessionTabId(tab.id)
+        const prev = activeHandleRef.current
+        if (prev) {
+          unsubscribeTerminal(prev)
+          initializedHandlesRef.current.delete(prev)
+        }
+        activeHandleRef.current = null
+        setActiveHandle(null)
+        if (client) {
+          void client
+            .sendRequest('session.tabs.activate', {
+              worktree: `id:${worktreeId}`,
+              tabId: tab.id
+            })
+            .catch(() => {})
+        }
         return
       }
 
@@ -1959,12 +1929,13 @@ export default function SessionScreen() {
     setCreateError('')
 
     try {
-      const response = await client.sendRequest('terminal.create', {
-        worktree: `id:${worktreeId}`
+      const response = await client.sendRequest('session.tabs.createTerminal', {
+        worktree: `id:${worktreeId}`,
+        afterTabId: activeSessionTabId ?? undefined
       })
       if (response.ok) {
         const result = (response as RpcSuccess).result as TerminalCreateResult
-        const created = result.terminal
+        const created = result.tab
         // Why: unsubscribe the old active terminal so the server restores its
         // desktop dims. Without this, the old terminal's mobile subscription
         // stays alive and its restore timer is never set.
@@ -1973,26 +1944,37 @@ export default function SessionScreen() {
           unsubscribeTerminal(prev)
           initializedHandlesRef.current.delete(prev)
         }
-        activeHandleRef.current = created.handle
-        setActiveHandle(created.handle)
-        setTerminals((prev) => {
-          // Why: guard against duplicates if a parallel fetchTerminals()
-          // already inserted this handle. Without this, React throws
-          // 'two children with the same key' when both the optimistic
-          // insert and a canonical refetch race during creation.
-          if (prev.some((t) => t.handle === created.handle)) {
-            terminalsRef.current = prev
+        pendingActiveSessionTabIdRef.current = created.id
+        activeSessionTabTypeRef.current = 'terminal'
+        setActiveSessionTabId(created.id)
+        setSessionTabs((prev) => {
+          if (prev.some((tab) => tab.id === created.id)) {
             return prev
           }
-          const next = [
-            ...prev,
-            { handle: created.handle, title: created.title || 'Terminal', isActive: true }
-          ]
-          terminalsRef.current = next
-          return next
+          return [...prev, { ...created, isActive: true }]
         })
-        subscribeToTerminal(created.handle)
-        setTimeout(() => void fetchTerminals(), 500)
+        if (typeof created.terminal === 'string') {
+          const createdHandle = created.terminal
+          activeHandleRef.current = createdHandle
+          setActiveHandle(createdHandle)
+          setTerminals((prev) => {
+            if (prev.some((t) => t.handle === createdHandle)) {
+              terminalsRef.current = prev
+              return prev
+            }
+            const next = [
+              ...prev,
+              { handle: createdHandle, title: created.title || 'Terminal', isActive: true }
+            ]
+            terminalsRef.current = next
+            return next
+          })
+          subscribeToTerminal(createdHandle)
+        } else {
+          activeHandleRef.current = null
+          setActiveHandle(null)
+        }
+        setTimeout(() => void fetchSessionTabs(), 500)
       } else {
         setCreateError('Failed to create terminal')
       }
@@ -2061,24 +2043,46 @@ export default function SessionScreen() {
     }
   }
 
+  async function handleCloseSessionTab(tab: MobileSessionTab) {
+    if (!client) return
+    try {
+      const response = await client.sendRequest('session.tabs.close', {
+        worktree: `id:${worktreeId}`,
+        tabId: tab.id
+      })
+      if (response.ok) {
+        if (tab.type === 'terminal' && typeof tab.terminal === 'string') {
+          unsubscribeTerminal(tab.terminal)
+          terminalRefs.current.delete(tab.terminal)
+          initializedHandlesRef.current.delete(tab.terminal)
+        }
+        setSessionTabs((prev) => prev.filter((candidate) => candidate.id !== tab.id))
+        if (activeSessionTabId === tab.id) {
+          activeSessionTabTypeRef.current = null
+          setActiveSessionTabId(null)
+          activeHandleRef.current = null
+          setActiveHandle(null)
+        }
+        setTimeout(() => void fetchSessionTabs(), 300)
+      }
+    } catch {
+      // Close failed — keep the authoritative session snapshot visible.
+    }
+  }
+
   const isPhoneMode = (handle: string | null): boolean => {
     if (!handle) return false
     const mode = terminalModes.get(handle)
     return mode === 'auto' || mode === 'phone' || mode === undefined
   }
 
-  const visibleTabs: MobileSessionTab[] =
-    sessionTabs.length > 0
-      ? mergeTerminalFallbackTabs(sessionTabs, terminals, activeHandle)
-      : terminals.map((terminal) => ({
-          type: 'terminal' as const,
-          id: terminal.handle,
-          title: terminal.title,
-          terminal: terminal.handle,
-          isActive: terminal.handle === activeHandle
-        }))
+  const visibleTabs: MobileSessionTab[] = sessionTabs
   const activeMarkdownTab = activeSessionTab?.type === 'markdown' ? activeSessionTab : null
   const activeFileTab = activeSessionTab?.type === 'file' ? activeSessionTab : null
+  const activePendingTerminalTab =
+    activeSessionTab?.type === 'terminal' && typeof activeSessionTab.terminal !== 'string'
+      ? activeSessionTab
+      : null
   const showLoadingState = connState === 'connected' && !terminalsLoaded && visibleTabs.length === 0
   const showEmptyState =
     connState === 'connected' && terminalsLoaded && visibleTabs.length === 0 && !activeHandle
@@ -2169,16 +2173,14 @@ export default function SessionScreen() {
                 {visibleTabs.map((t) => (
                   <Pressable
                     key={t.id}
-                    style={[
-                      styles.tab,
-                      (t.type === 'terminal'
-                        ? t.terminal === activeHandle
-                        : t.id === activeSessionTabId) && styles.tabActive
-                    ]}
+                    style={[styles.tab, t.id === activeSessionTabId && styles.tabActive]}
                     onPress={() => switchSessionTab(t)}
                     onLongPress={() => {
                       triggerMediumImpact()
                       if (t.type === 'terminal') {
+                        if (typeof t.terminal !== 'string') {
+                          return
+                        }
                         setActionTarget({
                           handle: t.terminal,
                           title: t.title,
@@ -2202,9 +2204,7 @@ export default function SessionScreen() {
                       <Text
                         style={[
                           styles.tabText,
-                          (t.type === 'terminal'
-                            ? t.terminal === activeHandle
-                            : t.id === activeSessionTabId) && styles.tabTextActive
+                          t.id === activeSessionTabId && styles.tabTextActive
                         ]}
                         numberOfLines={1}
                       >
@@ -2281,6 +2281,13 @@ export default function SessionScreen() {
                 <Text style={styles.toastText}>{toastMessage}</Text>
               </Animated.View>
             )}
+          </View>
+        ) : activePendingTerminalTab ? (
+          <View style={styles.emptyState}>
+            <ActivityIndicator size="small" color={colors.textSecondary} />
+            <Text style={styles.emptyText}>
+              {activePendingTerminalTab.title || 'Loading terminal'}
+            </Text>
           </View>
         ) : (
           <View
@@ -2550,6 +2557,17 @@ export default function SessionScreen() {
                 showToast('Path copied')
               }
             }
+          },
+          {
+            label: 'Close',
+            destructive: true,
+            onPress: () => {
+              const target = markdownActionTarget
+              setMarkdownActionTarget(null)
+              if (target) {
+                void handleCloseSessionTab(target)
+              }
+            }
           }
         ]}
         onClose={() => setMarkdownActionTarget(null)}
@@ -2566,6 +2584,17 @@ export default function SessionScreen() {
               setFileActionTarget(null)
               if (target) {
                 void readFileTab(target)
+              }
+            }
+          },
+          {
+            label: 'Close',
+            destructive: true,
+            onPress: () => {
+              const target = fileActionTarget
+              setFileActionTarget(null)
+              if (target) {
+                void handleCloseSessionTab(target)
               }
             }
           }

@@ -51,8 +51,10 @@ import type {
   RuntimeSyncedTab,
   RuntimeMarkdownReadTabResult,
   RuntimeMarkdownSaveTabResult,
+  RuntimeMobileSessionCreateTerminalResult,
   RuntimeMobileSessionClientTab,
   RuntimeMobileSessionMarkdownTab,
+  RuntimeMobileSessionTabsRemovedResult,
   RuntimeMobileSessionTabsResult,
   RuntimeMobileSessionTabsSnapshot,
   RuntimeFileListResult,
@@ -297,8 +299,9 @@ type RuntimeNotifier = {
     opts: { direction: 'horizontal' | 'vertical'; command?: string }
   ): void
   renameTerminal(tabId: string, title: string | null): void
-  focusTerminal(tabId: string, worktreeId: string): void
+  focusTerminal(tabId: string, worktreeId: string, leafId?: string | null): void
   focusEditorTab?(tabId: string, worktreeId: string): void
+  closeSessionTab?(tabId: string, worktreeId: string): void
   openFile?(worktreeId: string, filePath: string, relativePath: string): void
   readMobileMarkdownTab?(worktreeId: string, tabId: string): Promise<RuntimeMarkdownReadTabResult>
   saveMobileMarkdownTab?(
@@ -779,7 +782,7 @@ export class OrcaRuntimeService {
     }
 
     this.tabs = new Map(graph.tabs.map((tab) => [tab.tabId, tab]))
-    this.syncMobileSessionTabs(graph.mobileSessionTabs ?? [])
+    this.syncMobileSessionTabs(graph.mobileSessionTabs)
     const nextLeaves = new Map<string, RuntimeLeafRecord>()
 
     // Why: renderer reloads can briefly republish the same leaf with no ptyId;
@@ -896,11 +899,28 @@ export class OrcaRuntimeService {
     }
 
     if (tab.type === 'terminal') {
-      this.notifier?.focusTerminal(tab.terminalTabId, worktreeId)
+      this.notifier?.focusTerminal(tab.parentTabId, worktreeId, tab.leafId)
     } else {
       this.notifier?.focusEditorTab?.(tab.id, worktreeId)
     }
     return this.getMobileSessionTabsForWorktree(worktreeId)
+  }
+
+  async closeMobileSessionTab(worktreeSelector: string, tabId: string): Promise<{ closed: true }> {
+    const explicitWorktreeId = getExplicitWorktreeIdSelector(worktreeSelector)
+    const worktreeId =
+      explicitWorktreeId ?? (await this.resolveWorktreeSelector(worktreeSelector)).id
+    const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
+    const tab = snapshot?.tabs.find((candidate) => candidate.id === tabId)
+    if (!tab) {
+      throw new Error('tab_not_found')
+    }
+    if (tab.type === 'terminal') {
+      this.notifier?.closeTerminal(tab.parentTabId)
+    } else {
+      this.notifier?.closeSessionTab?.(tab.id, worktreeId)
+    }
+    return { closed: true }
   }
 
   async readMobileMarkdownTab(
@@ -4314,6 +4334,117 @@ export class OrcaRuntimeService {
     return { handle, worktreeId: worktreeId ?? '', title: reply.title }
   }
 
+  async createMobileSessionTerminal(
+    worktreeSelector: string,
+    opts: { afterTabId?: string; activate?: boolean } = {}
+  ): Promise<RuntimeMobileSessionCreateTerminalResult> {
+    this.assertGraphReady()
+    const worktreeId = (await this.resolveWorktreeSelector(worktreeSelector)).id
+    let afterDesktopTabId: string | undefined
+    if (opts.afterTabId) {
+      const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
+      const anchor = snapshot?.tabs.find((tab) => tab.id === opts.afterTabId)
+      if (!anchor) {
+        throw new Error('after_tab_not_found')
+      }
+      afterDesktopTabId = anchor.type === 'terminal' ? anchor.parentTabId : anchor.id
+    }
+
+    const win = this.getAuthoritativeWindow()
+    const requestId = randomUUID()
+    const reply = await new Promise<{ tabId: string; title: string }>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        ipcMain.removeListener('terminal:tabCreateReply', handler)
+        reject(new Error('Terminal creation timed out'))
+      }, 10_000)
+
+      const handler = (
+        _event: Electron.IpcMainEvent,
+        r: { requestId: string; tabId?: string; title?: string; error?: string }
+      ): void => {
+        if (r.requestId !== requestId) {
+          return
+        }
+        clearTimeout(timer)
+        ipcMain.removeListener('terminal:tabCreateReply', handler)
+        if (r.error) {
+          reject(new Error(r.error))
+        } else {
+          resolve({ tabId: r.tabId!, title: r.title ?? '' })
+        }
+      }
+      ipcMain.on('terminal:tabCreateReply', handler)
+      win.webContents.send('terminal:requestTabCreate', {
+        requestId,
+        worktreeId,
+        afterTabId: afterDesktopTabId
+      })
+    })
+
+    if (opts.activate !== false) {
+      this.notifier?.focusTerminal(reply.tabId, worktreeId, 'pane:1')
+    }
+    return await this.waitForMobileTerminalSurface(worktreeId, reply.tabId)
+  }
+
+  private waitForMobileTerminalSurface(
+    worktreeId: string,
+    parentTabId: string,
+    timeoutMs = 10_000
+  ): Promise<RuntimeMobileSessionCreateTerminalResult> {
+    const existing = this.findMobileTerminalSurface(worktreeId, parentTabId)
+    if (existing) {
+      return Promise.resolve(existing)
+    }
+
+    return new Promise<RuntimeMobileSessionCreateTerminalResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const idx = this.graphSyncCallbacks.indexOf(check)
+        if (idx !== -1) {
+          this.graphSyncCallbacks.splice(idx, 1)
+        }
+        reject(new Error('Timed out waiting for terminal surface after creation'))
+      }, timeoutMs)
+
+      const check = (): void => {
+        const next = this.findMobileTerminalSurface(worktreeId, parentTabId)
+        if (!next) {
+          return
+        }
+        clearTimeout(timer)
+        const idx = this.graphSyncCallbacks.indexOf(check)
+        if (idx !== -1) {
+          this.graphSyncCallbacks.splice(idx, 1)
+        }
+        resolve(next)
+      }
+      this.graphSyncCallbacks.push(check)
+      check()
+    })
+  }
+
+  private findMobileTerminalSurface(
+    worktreeId: string,
+    parentTabId: string
+  ): RuntimeMobileSessionCreateTerminalResult | null {
+    const snapshot = this.mobileSessionTabsByWorktree.get(worktreeId)
+    if (!snapshot) {
+      return null
+    }
+    const result = this.toMobileSessionTabsResult(snapshot)
+    const tab = result.tabs.find(
+      (candidate) => candidate.type === 'terminal' && candidate.parentTabId === parentTabId
+    )
+    if (!tab || tab.type !== 'terminal') {
+      return null
+    }
+    return {
+      tab,
+      publicationEpoch: result.publicationEpoch,
+      snapshotVersion: result.snapshotVersion
+    }
+  }
+
   private waitForTerminalHandle(tabId: string, timeoutMs = 10_000): Promise<string> {
     const existing = this.resolveHandleForTab(tabId)
     if (existing) {
@@ -4883,19 +5014,43 @@ export class OrcaRuntimeService {
     }
   }
 
-  private syncMobileSessionTabs(snapshots: RuntimeMobileSessionTabsSnapshot[]): void {
+  private syncMobileSessionTabs(snapshots: RuntimeMobileSessionTabsSnapshot[] | undefined): void {
+    if (snapshots === undefined) {
+      return
+    }
     const nextWorktrees = new Set<string>()
     for (const snapshot of snapshots) {
       nextWorktrees.add(snapshot.worktree)
       const existing = this.mobileSessionTabsByWorktree.get(snapshot.worktree)
-      if (!existing || snapshot.snapshotVersion >= existing.snapshotVersion) {
+      if (
+        !existing ||
+        snapshot.publicationEpoch !== existing.publicationEpoch ||
+        snapshot.snapshotVersion >= existing.snapshotVersion
+      ) {
         this.mobileSessionTabsByWorktree.set(snapshot.worktree, snapshot)
       }
     }
     for (const worktreeId of this.mobileSessionTabsByWorktree.keys()) {
       if (!nextWorktrees.has(worktreeId)) {
         this.mobileSessionTabsByWorktree.delete(worktreeId)
+        this.notifyMobileSessionTabsRemoved(worktreeId)
       }
+    }
+  }
+
+  private notifyMobileSessionTabsRemoved(worktreeId: string): void {
+    const removed: RuntimeMobileSessionTabsRemovedResult = {
+      worktree: worktreeId,
+      publicationEpoch: `removed:${Date.now().toString(36)}`,
+      snapshotVersion: 0,
+      removed: true,
+      activeGroupId: null,
+      activeTabId: null,
+      activeTabType: null,
+      tabs: []
+    }
+    for (const listener of this.mobileSessionTabListeners) {
+      listener(removed)
     }
   }
 
@@ -4916,6 +5071,7 @@ export class OrcaRuntimeService {
     if (!snapshot) {
       return {
         worktree: worktreeId,
+        publicationEpoch: 'none',
         snapshotVersion: 0,
         activeGroupId: null,
         activeTabId: null,
@@ -4953,26 +5109,24 @@ export class OrcaRuntimeService {
         tabs.push(tab)
         continue
       }
-      const syncedTab = this.tabs.get(tab.terminalTabId)
-      const activeLeafId = syncedTab?.activeLeafId ?? null
-      const leaf =
-        activeLeafId != null
-          ? this.leaves.get(this.getLeafKey(tab.terminalTabId, activeLeafId))
-          : null
-      if (!leaf) {
-        continue
-      }
+      const syncedTab = this.tabs.get(tab.parentTabId)
+      const leaf = this.leaves.get(this.getLeafKey(tab.parentTabId, tab.leafId)) ?? null
       tabs.push({
         type: 'terminal',
         id: tab.id,
-        title: syncedTab?.title ?? tab.title,
-        terminal: this.issueHandle(leaf),
-        isActive: tab.isActive
+        parentTabId: tab.parentTabId,
+        leafId: tab.leafId,
+        title: leaf?.paneTitle ?? syncedTab?.title ?? tab.title,
+        isActive: tab.isActive,
+        ...(leaf
+          ? { status: 'ready' as const, terminal: this.issueHandle(leaf) }
+          : { status: 'pending-handle' as const, terminal: null })
       })
     }
     const active = tabs.find((tab) => tab.isActive) ?? null
     return {
       worktree: snapshot.worktree,
+      publicationEpoch: snapshot.publicationEpoch,
       snapshotVersion: snapshot.snapshotVersion,
       activeGroupId: snapshot.activeGroupId,
       activeTabId: active?.id ?? null,

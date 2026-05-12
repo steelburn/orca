@@ -25,6 +25,7 @@ import {
 } from '../../../shared/agent-status-types'
 import { isGitRepoKind } from '../../../shared/repo-kind'
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
+import { focusRuntimeTerminalSurface } from '@/runtime/sync-runtime-graph'
 import { setFitOverride, hydrateOverrides } from '@/lib/pane-manager/mobile-fit-overrides'
 import { setDriverForPty } from '@/lib/pane-manager/mobile-driver-state'
 import { destroyPersistentWebview } from '@/components/browser-pane/webview-registry'
@@ -267,6 +268,31 @@ export function useIpcEvents(): void {
           // focus recency for Cmd+J. See docs/cmd-j-empty-query-ordering.md.
           store.markWorktreeVisited(worktreeId)
           const tab = store.createTab(worktreeId)
+          if (data.afterTabId) {
+            const createdUnifiedTab = useAppStore
+              .getState()
+              .unifiedTabsByWorktree[worktreeId]?.find((item) => item.entityId === tab.id)
+            const anchorUnifiedTab = useAppStore
+              .getState()
+              .unifiedTabsByWorktree[worktreeId]?.find((item) => item.id === data.afterTabId)
+            if (
+              createdUnifiedTab &&
+              anchorUnifiedTab &&
+              createdUnifiedTab.groupId === anchorUnifiedTab.groupId
+            ) {
+              const group = useAppStore
+                .getState()
+                .groupsByWorktree[worktreeId]?.find((item) => item.id === createdUnifiedTab.groupId)
+              const order = (group?.tabOrder ?? []).filter((id) => id !== createdUnifiedTab.id)
+              const anchorIndex = order.indexOf(anchorUnifiedTab.id)
+              order.splice(
+                anchorIndex === -1 ? order.length : anchorIndex + 1,
+                0,
+                createdUnifiedTab.id
+              )
+              useAppStore.getState().reorderUnifiedTabs(createdUnifiedTab.groupId, order)
+            }
+          }
           store.setActiveTabType('terminal')
           store.setActiveTab(tab.id)
           store.revealWorktreeInSidebar(worktreeId)
@@ -304,7 +330,7 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
-      window.api.ui.onFocusTerminal(({ tabId, worktreeId }) => {
+      window.api.ui.onFocusTerminal(({ tabId, worktreeId, leafId }) => {
         const store = useAppStore.getState()
         store.setActiveWorktree(worktreeId)
         // Why: CLI-driven focus is a user-initiated switch; stamp focus
@@ -313,6 +339,9 @@ export function useIpcEvents(): void {
         store.setActiveView('terminal')
         store.setActiveTab(tabId)
         store.revealWorktreeInSidebar(worktreeId)
+        if (!focusRuntimeTerminalSurface(tabId, leafId)) {
+          focusTerminalTabSurface(tabId)
+        }
       })
     )
 
@@ -333,6 +362,12 @@ export function useIpcEvents(): void {
         store.setActiveFile(tab.entityId)
         store.setActiveTabType('editor')
         store.revealWorktreeInSidebar(worktreeId)
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onCloseSessionTab(({ tabId }) => {
+        useAppStore.getState().closeUnifiedTab(tabId)
       })
     )
 

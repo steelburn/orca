@@ -1863,13 +1863,20 @@ const api = {
       callback: (data: {
         requestId: string
         worktreeId?: string
+        afterTabId?: string
         command?: string
         title?: string
       }) => void
     ): (() => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
-        data: { requestId: string; worktreeId?: string; command?: string; title?: string }
+        data: {
+          requestId: string
+          worktreeId?: string
+          afterTabId?: string
+          command?: string
+          title?: string
+        }
       ) => callback(data)
       ipcRenderer.on('terminal:requestTabCreate', listener)
       return () => ipcRenderer.removeListener('terminal:requestTabCreate', listener)
@@ -1913,11 +1920,11 @@ const api = {
       return () => ipcRenderer.removeListener('ui:renameTerminal', listener)
     },
     onFocusTerminal: (
-      callback: (data: { tabId: string; worktreeId: string }) => void
+      callback: (data: { tabId: string; worktreeId: string; leafId?: string | null }) => void
     ): (() => void) => {
       const listener = (
         _event: Electron.IpcRendererEvent,
-        data: { tabId: string; worktreeId: string }
+        data: { tabId: string; worktreeId: string; leafId?: string | null }
       ) => callback(data)
       ipcRenderer.on('ui:focusTerminal', listener)
       return () => ipcRenderer.removeListener('ui:focusTerminal', listener)
@@ -1931,6 +1938,16 @@ const api = {
       ) => callback(data)
       ipcRenderer.on('ui:focusEditorTab', listener)
       return () => ipcRenderer.removeListener('ui:focusEditorTab', listener)
+    },
+    onCloseSessionTab: (
+      callback: (data: { tabId: string; worktreeId: string }) => void
+    ): (() => void) => {
+      const listener = (
+        _event: Electron.IpcRendererEvent,
+        data: { tabId: string; worktreeId: string }
+      ) => callback(data)
+      ipcRenderer.on('ui:closeSessionTab', listener)
+      return () => ipcRenderer.removeListener('ui:closeSessionTab', listener)
     },
     onOpenFileFromMobile: (
       callback: (data: { worktreeId: string; filePath: string; relativePath: string }) => void

@@ -242,8 +242,10 @@ function registerRuntimeWindowLifecycle(
       })
     },
     renameTerminal: (tabId, title) => send('ui:renameTerminal', { tabId, title }),
-    focusTerminal: (tabId, worktreeId) => send('ui:focusTerminal', { tabId, worktreeId }),
+    focusTerminal: (tabId, worktreeId, leafId) =>
+      send('ui:focusTerminal', { tabId, worktreeId, leafId }),
     focusEditorTab: (tabId, worktreeId) => send('ui:focusEditorTab', { tabId, worktreeId }),
+    closeSessionTab: (tabId, worktreeId) => send('ui:closeSessionTab', { tabId, worktreeId }),
     openFile: (worktreeId, filePath, relativePath) =>
       send('ui:openFileFromMobile', { worktreeId, filePath, relativePath }),
     readMobileMarkdownTab: (worktreeId, tabId) =>

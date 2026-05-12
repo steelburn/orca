@@ -104,6 +104,17 @@ function isMarkdownPath(relativePath: string): boolean {
   return /\.(md|mdx|markdown)$/i.test(relativePath)
 }
 
+function getWorktreeLabel(name: string | undefined, worktreeId: string): string {
+  if (name?.trim()) {
+    return name.trim()
+  }
+  const pathPart = worktreeId.includes('::')
+    ? worktreeId.slice(worktreeId.indexOf('::') + 2)
+    : worktreeId
+  const normalized = pathPart.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized.slice(normalized.lastIndexOf('/') + 1) || 'Worktree'
+}
+
 export default function MobileFileExplorerScreen() {
   const { hostId, worktreeId, name } = useLocalSearchParams<{
     hostId: string
@@ -118,6 +129,7 @@ export default function MobileFileExplorerScreen() {
   const [error, setError] = useState<string | null>(null)
   const [openingPath, setOpeningPath] = useState<string | null>(null)
   const [truncated, setTruncated] = useState(false)
+  const worktreeLabel = getWorktreeLabel(name, worktreeId)
 
   const loadFiles = useCallback(async () => {
     if (!client || connState !== 'connected') {
@@ -260,7 +272,7 @@ export default function MobileFileExplorerScreen() {
               Files
             </Text>
             <Text style={styles.meta} numberOfLines={1}>
-              {name || 'Active worktree'}
+              {worktreeLabel}
               {truncated ? ' - Showing first 5000' : ''}
             </Text>
           </View>

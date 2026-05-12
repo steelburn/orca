@@ -15,6 +15,7 @@ describe('session tab RPC methods', () => {
       getRuntimeId: () => 'test-runtime',
       listMobileSessionTabs: vi.fn().mockResolvedValue({
         worktree: 'wt-1',
+        publicationEpoch: 'test',
         snapshotVersion: 1,
         activeGroupId: null,
         activeTabId: null,

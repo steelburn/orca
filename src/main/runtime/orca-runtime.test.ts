@@ -620,6 +620,124 @@ describe('OrcaRuntimeService', () => {
     expect(read.tail).toEqual(['after unavailable'])
   })
 
+  it('keeps mobile terminal surfaces visible while their leaf handle is pending', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [],
+      leaves: [],
+      mobileSessionTabs: [
+        {
+          worktree: TEST_WORKTREE_ID,
+          publicationEpoch: 'epoch-1',
+          snapshotVersion: 1,
+          activeGroupId: 'group-1',
+          activeTabId: 'tab-1::pane:1',
+          activeTabType: 'terminal',
+          tabs: [
+            {
+              type: 'terminal',
+              id: 'tab-1::pane:1',
+              parentTabId: 'tab-1',
+              leafId: 'pane:1',
+              title: 'Terminal 1',
+              isActive: true
+            }
+          ]
+        }
+      ]
+    })
+
+    const result = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+
+    expect(result.tabs).toEqual([
+      expect.objectContaining({
+        type: 'terminal',
+        id: 'tab-1::pane:1',
+        parentTabId: 'tab-1',
+        leafId: 'pane:1',
+        status: 'pending-handle',
+        terminal: null
+      })
+    ])
+  })
+
+  it('resolves mobile terminal surfaces by exact split leaf', async () => {
+    const runtime = new OrcaRuntimeService(store)
+    runtime.attachWindow(1)
+    runtime.syncWindowGraph(1, {
+      tabs: [
+        {
+          tabId: 'tab-1',
+          worktreeId: TEST_WORKTREE_ID,
+          title: 'Terminal 1',
+          activeLeafId: 'pane:2',
+          layout: null
+        }
+      ],
+      leaves: [
+        {
+          tabId: 'tab-1',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: 'pane:1',
+          paneRuntimeId: 1,
+          ptyId: 'pty-1',
+          paneTitle: 'left'
+        },
+        {
+          tabId: 'tab-1',
+          worktreeId: TEST_WORKTREE_ID,
+          leafId: 'pane:2',
+          paneRuntimeId: 2,
+          ptyId: 'pty-2',
+          paneTitle: 'right'
+        }
+      ],
+      mobileSessionTabs: [
+        {
+          worktree: TEST_WORKTREE_ID,
+          publicationEpoch: 'epoch-1',
+          snapshotVersion: 1,
+          activeGroupId: 'group-1',
+          activeTabId: 'tab-1::pane:2',
+          activeTabType: 'terminal',
+          tabs: [
+            {
+              type: 'terminal',
+              id: 'tab-1::pane:1',
+              parentTabId: 'tab-1',
+              leafId: 'pane:1',
+              title: 'Terminal 1',
+              isActive: false
+            },
+            {
+              type: 'terminal',
+              id: 'tab-1::pane:2',
+              parentTabId: 'tab-1',
+              leafId: 'pane:2',
+              title: 'Terminal 1',
+              isActive: true
+            }
+          ]
+        }
+      ]
+    })
+
+    const result = await runtime.listMobileSessionTabs(`id:${TEST_WORKTREE_ID}`)
+
+    expect(result.tabs).toHaveLength(2)
+    expect(result.tabs).toEqual([
+      expect.objectContaining({ id: 'tab-1::pane:1', title: 'left', status: 'ready' }),
+      expect.objectContaining({ id: 'tab-1::pane:2', title: 'right', status: 'ready' })
+    ])
+    const [left, right] = result.tabs
+    expect(left?.type).toBe('terminal')
+    expect(right?.type).toBe('terminal')
+    if (left?.type === 'terminal' && right?.type === 'terminal') {
+      expect(left.terminal).not.toBe(right.terminal)
+    }
+  })
+
   it('keeps already-idle status after tui-idle wait for immediate message delivery', async () => {
     const runtime = new OrcaRuntimeService(store)
     const db = new OrchestrationDb(':memory:')

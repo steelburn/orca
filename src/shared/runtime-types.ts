@@ -74,7 +74,8 @@ export type RuntimeMobileSessionTerminalTab = {
   type: 'terminal'
   id: string
   title: string
-  terminalTabId: string
+  parentTabId: string
+  leafId: string
   isActive: boolean
 }
 
@@ -110,12 +111,15 @@ export type RuntimeMobileSessionSnapshotTab =
   | RuntimeMobileSessionMarkdownTab
   | RuntimeMobileSessionFileTab
 
-export type RuntimeMobileSessionTerminalClientTab = Omit<
-  RuntimeMobileSessionTerminalTab,
-  'terminalTabId'
-> & {
-  terminal: string
-}
+export type RuntimeMobileSessionTerminalClientTab =
+  | (RuntimeMobileSessionTerminalTab & {
+      status: 'pending-handle'
+      terminal: null
+    })
+  | (RuntimeMobileSessionTerminalTab & {
+      status: 'ready'
+      terminal: string
+    })
 
 export type RuntimeMobileSessionClientTab =
   | RuntimeMobileSessionTerminalClientTab
@@ -124,6 +128,7 @@ export type RuntimeMobileSessionClientTab =
 
 export type RuntimeMobileSessionTabsSnapshot = {
   worktree: string
+  publicationEpoch: string
   snapshotVersion: number
   activeGroupId: string | null
   activeTabId: string | null
@@ -133,11 +138,26 @@ export type RuntimeMobileSessionTabsSnapshot = {
 
 export type RuntimeMobileSessionTabsResult = {
   worktree: string
+  publicationEpoch: string
   snapshotVersion: number
   activeGroupId: string | null
   activeTabId: string | null
   activeTabType: 'terminal' | 'markdown' | 'file' | null
   tabs: RuntimeMobileSessionClientTab[]
+}
+
+export type RuntimeMobileSessionCreateTerminalResult = {
+  tab: RuntimeMobileSessionTerminalClientTab
+  publicationEpoch: string
+  snapshotVersion: number
+}
+
+export type RuntimeMobileSessionTabsRemovedResult = RuntimeMobileSessionTabsResult & {
+  removed: true
+  activeGroupId: null
+  activeTabId: null
+  activeTabType: null
+  tabs: []
 }
 
 export type RuntimeFileListEntry = {

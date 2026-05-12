@@ -15,6 +15,11 @@ const ActivateTab = WorktreeTabSelector.extend({
     .pipe(z.string().min(1, 'Missing tab id'))
 })
 
+const CreateTerminalTab = WorktreeTabSelector.extend({
+  afterTabId: z.string().optional(),
+  activate: z.boolean().optional()
+})
+
 const SaveMarkdownTab = ActivateTab.extend({
   baseVersion: z
     .unknown()
@@ -34,6 +39,21 @@ export const SESSION_TAB_METHODS: RpcAnyMethod[] = [
     params: ActivateTab,
     handler: async (params, { runtime }) =>
       runtime.activateMobileSessionTab(params.worktree, params.tabId)
+  }),
+  defineMethod({
+    name: 'session.tabs.close',
+    params: ActivateTab,
+    handler: async (params, { runtime }) =>
+      runtime.closeMobileSessionTab(params.worktree, params.tabId)
+  }),
+  defineMethod({
+    name: 'session.tabs.createTerminal',
+    params: CreateTerminalTab,
+    handler: async (params, { runtime }) =>
+      runtime.createMobileSessionTerminal(params.worktree, {
+        afterTabId: params.afterTabId,
+        activate: params.activate
+      })
   }),
   defineStreamingMethod({
     name: 'session.tabs.subscribe',

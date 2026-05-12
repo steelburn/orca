@@ -1,4 +1,9 @@
-import { paneLeafId, serializePaneTree } from '@/components/terminal-pane/layout-serialization'
+/* eslint-disable max-lines -- Why: runtime graph sync and mobile session-tab publication share the same injected renderer state and terminal registry. Keeping them together prevents a second store/registry reader from drifting. */
+import {
+  collectLeafIdsInOrder,
+  paneLeafId,
+  serializePaneTree
+} from '@/components/terminal-pane/layout-serialization'
 import { warnTerminalLifecycleAnomaly } from '@/components/terminal-pane/terminal-lifecycle-diagnostics'
 import type { PaneManager } from '@/lib/pane-manager/pane-manager'
 import type { AppState } from '@/store/types'
@@ -31,6 +36,10 @@ let syncScheduled = false
 let syncEnabled = false
 let getStoreState: (() => AppState) | null = null
 let mobileSessionSnapshotVersion = 0
+const mobileSessionPublicationEpoch =
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `renderer:${Date.now().toString(36)}`
 
 export function setRuntimeGraphStoreStateGetter(getter: (() => AppState) | null): void {
   getStoreState = getter
@@ -45,6 +54,25 @@ export function registerRuntimeTerminalTab(tab: RegisteredTerminalTab): () => vo
     tabRegisteredAt.delete(tab.tabId)
     scheduleRuntimeGraphSync()
   }
+}
+
+export function focusRuntimeTerminalSurface(tabId: string, leafId?: string | null): boolean {
+  const registered = registeredTabs.get(tabId)
+  const manager = registered?.getManager()
+  if (!manager) {
+    return false
+  }
+  if (!leafId) {
+    manager.getActivePane()?.terminal.focus()
+    return true
+  }
+  const pane = manager.getPanes().find((candidate) => paneLeafId(candidate.id) === leafId)
+  if (!pane) {
+    return false
+  }
+  manager.setActivePane(pane.id, { focus: true })
+  scheduleRuntimeGraphSync()
+  return true
 }
 
 export function setRuntimeGraphSyncEnabled(enabled: boolean): void {
@@ -84,6 +112,8 @@ export function getRuntimeMobileSessionSyncKey(state: AppState): string {
     tabBarOrderByWorktree: state.tabBarOrderByWorktree,
     activeFileId: state.activeFileId,
     activeFileIdByWorktree: state.activeFileIdByWorktree,
+    terminalLayoutsByTabId: state.terminalLayoutsByTabId,
+    runtimePaneTitlesByTabId: state.runtimePaneTitlesByTabId,
     openFiles: state.openFiles.map((file) => ({
       id: file.id,
       filePath: file.filePath,
@@ -196,17 +226,7 @@ function buildMobileSessionTabSnapshots(state: AppState): RuntimeMobileSessionTa
         if (!terminal) {
           continue
         }
-        tabs.push({
-          type: 'terminal',
-          id: terminal.id,
-          title: terminal.customTitle ?? terminal.title ?? 'Terminal',
-          terminalTabId: terminal.id,
-          isActive: item.tabId
-            ? state.groupsByWorktree[worktreeId]?.some(
-                (group) => group.id === activeGroupId && group.activeTabId === item.tabId
-              ) === true
-            : state.activeTabId === terminal.id
-        })
+        tabs.push(...buildMobileTerminalSurfaceTabs(state, terminal.id, worktreeId, item.tabId))
       } else if (item.type === 'editor') {
         const file = state.openFiles.find(
           (candidate) => candidate.id === item.id && candidate.worktreeId === worktreeId
@@ -223,6 +243,7 @@ function buildMobileSessionTabSnapshots(state: AppState): RuntimeMobileSessionTa
     const active = tabs.find((tab) => tab.isActive) ?? null
     snapshots.push({
       worktree: worktreeId,
+      publicationEpoch: mobileSessionPublicationEpoch,
       snapshotVersion: ++mobileSessionSnapshotVersion,
       activeGroupId,
       activeTabId: active?.id ?? null,
@@ -232,6 +253,69 @@ function buildMobileSessionTabSnapshots(state: AppState): RuntimeMobileSessionTa
   }
 
   return snapshots
+}
+
+function mobileTerminalSurfaceId(parentTabId: string, leafId: string): string {
+  return `${parentTabId}::${leafId}`
+}
+
+function getRuntimeLeafIdsForTerminal(tabId: string, state: AppState): string[] {
+  const registered = registeredTabs.get(tabId)
+  const manager = registered?.getManager()
+  const liveLeafIds = manager?.getPanes().map((pane) => paneLeafId(pane.id)) ?? []
+  if (liveLeafIds.length > 0) {
+    return liveLeafIds
+  }
+
+  const layout = state.terminalLayoutsByTabId[tabId]
+  const persistedLeafIds = collectLeafIdsInOrder(layout?.root)
+  if (persistedLeafIds.length > 0) {
+    return persistedLeafIds
+  }
+
+  // Why: a newly-created terminal tab can be in the store before TerminalPane
+  // mounts. Publish its deterministic first-pane surface so mobile does not
+  // fill the startup gap from terminal.list.
+  return [paneLeafId(1)]
+}
+
+function buildMobileTerminalSurfaceTabs(
+  state: AppState,
+  terminalTabId: string,
+  worktreeId: string,
+  unifiedTabId?: string
+): RuntimeMobileSessionSnapshotTab[] {
+  const terminal = (state.tabsByWorktree[worktreeId] ?? []).find((tab) => tab.id === terminalTabId)
+  if (!terminal) {
+    return []
+  }
+
+  const isDesktopTabActive = unifiedTabId
+    ? state.groupsByWorktree[worktreeId]?.some(
+        (group) =>
+          group.id === state.activeGroupIdByWorktree[worktreeId] &&
+          group.activeTabId === unifiedTabId
+      ) === true
+    : state.activeTabId === terminal.id
+  const liveActiveLeafId =
+    registeredTabs.get(terminalTabId)?.getManager()?.getActivePane()?.id ?? null
+  const activeLeafId =
+    liveActiveLeafId !== null
+      ? paneLeafId(liveActiveLeafId)
+      : (state.terminalLayoutsByTabId[terminalTabId]?.activeLeafId ?? paneLeafId(1))
+  const paneTitles = state.runtimePaneTitlesByTabId[terminalTabId] ?? {}
+  return getRuntimeLeafIdsForTerminal(terminalTabId, state).map((leafId) => {
+    const paneId = /^pane:(\d+)$/.exec(leafId)?.[1]
+    const paneTitle = paneId ? paneTitles[Number(paneId)] : undefined
+    return {
+      type: 'terminal' as const,
+      id: mobileTerminalSurfaceId(terminalTabId, leafId),
+      title: paneTitle ?? terminal.customTitle ?? terminal.title ?? 'Terminal',
+      parentTabId: terminalTabId,
+      leafId,
+      isActive: isDesktopTabActive && leafId === activeLeafId
+    }
+  })
 }
 
 function buildMobileMarkdownTab(
