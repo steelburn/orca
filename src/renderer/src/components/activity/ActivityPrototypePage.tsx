@@ -323,11 +323,20 @@ function ThreadRow({
         }
       }}
       className={cn(
-        'group relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-border px-3 text-left transition-colors hover:bg-accent/40',
+        // Why (selected/hover/unread cues match WorktreeCard):
+        // - selected → solid black/white tint + faint shadow, no hover
+        //   override (the active class wins so hover doesn't fight it).
+        // - non-selected → only then does hover apply (bg-accent/40), so a
+        //   selected row stays visually fixed when the cursor moves over it.
+        // - unread → weight + left-edge primary bar carry the cue; no row
+        //   tint, mirroring WorktreeCard's "weight alone" pattern. Three
+        //   stacked tints (selected + unread + hover) made selected and
+        //   unread look identical when hovered.
+        'group relative grid w-full grid-cols-[minmax(0,1fr)_auto] gap-2 border-b border-border px-3 text-left transition-colors',
         compact ? 'py-1.5' : 'py-2.5',
-        selected &&
-          'bg-black/[0.08] shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-white/[0.10] dark:shadow-[0_1px_2px_rgba(0,0,0,0.03)]',
-        thread.unread && 'bg-primary/[0.045] dark:bg-primary/[0.08]'
+        selected
+          ? 'bg-black/[0.08] shadow-[0_1px_2px_rgba(0,0,0,0.04)] dark:bg-white/[0.10] dark:shadow-[0_1px_2px_rgba(0,0,0,0.03)]'
+          : 'hover:bg-accent/40'
       )}
     >
       {thread.unread ? (
