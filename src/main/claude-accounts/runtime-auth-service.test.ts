@@ -1145,7 +1145,7 @@ describe('ClaudeRuntimeAuthService', () => {
     expect(testState.legacyKeychainCredentials).toBe(systemCredentials)
   })
 
-  it('preserves external oauth metadata while restoring owned credentials', async () => {
+  it('restores oauth metadata when credentials prove managed ownership', async () => {
     const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
     const runtimeConfigPath = join(testState.fakeHomeDir, '.claude.json')
     const systemCredentials = createClaudeCredentialsJson('system@example.com', 'system')
@@ -1184,7 +1184,7 @@ describe('ClaudeRuntimeAuthService', () => {
     await service.syncForCurrentSelection()
 
     expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(systemCredentials)
-    expect(readRuntimeOauthAccountForTest()).toEqual(externalOauthAccount)
+    expect(readRuntimeOauthAccountForTest()).toEqual(systemOauthAccount)
   })
 
   it('restores owned oauth metadata when external credentials change but metadata does not', async () => {
@@ -1223,6 +1223,47 @@ describe('ClaudeRuntimeAuthService', () => {
 
     expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(externalCredentials)
     expect(readRuntimeOauthAccountForTest()).toEqual(systemOauthAccount)
+  })
+
+  it('restores owned oauth metadata when only keychain proves managed ownership', async () => {
+    const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+    const runtimeConfigPath = join(testState.fakeHomeDir, '.claude.json')
+    const systemCredentials = createClaudeCredentialsJson('system@example.com', 'system')
+    const managedCredentials = createClaudeCredentialsJson('user@example.com', 'managed')
+    const externalCredentials = createClaudeCredentialsJson('external@example.com', 'external')
+    const systemOauthAccount = { accountUuid: 'system-account' }
+    writeFileSync(runtimeCredentialsPath, systemCredentials, 'utf-8')
+    writeFileSync(
+      runtimeConfigPath,
+      `${JSON.stringify({ oauthAccount: systemOauthAccount })}\n`,
+      'utf-8'
+    )
+    testState.scopedKeychainCredentials = systemCredentials
+    testState.legacyKeychainCredentials = systemCredentials
+    const managedAuthPath = createManagedClaudeAuth(
+      testState.userDataDir,
+      'account-1',
+      managedCredentials,
+      'null\n'
+    )
+    const settings = createSettings({
+      claudeManagedAccounts: [createClaudeAccount('account-1', managedAuthPath)]
+    })
+    const store = createStore(settings)
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    settings.activeClaudeManagedAccountId = 'account-1'
+    await service.syncForCurrentSelection()
+
+    writeFileSync(runtimeCredentialsPath, externalCredentials, 'utf-8')
+    settings.activeClaudeManagedAccountId = null
+    await service.syncForCurrentSelection()
+
+    expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(externalCredentials)
+    expect(readRuntimeOauthAccountForTest()).toEqual(systemOauthAccount)
+    expect(testState.scopedKeychainCredentials).toBe(systemCredentials)
+    expect(testState.legacyKeychainCredentials).toBe(systemCredentials)
   })
 
   it('uses managed credentials as ownership baseline after restart with partial external changes', async () => {
@@ -1745,6 +1786,36 @@ describe('ClaudeRuntimeAuthService', () => {
     expect(testState.legacyKeychainCredentials).toBeNull()
   })
 
+  it('preserves missing-managed oauth metadata without credential ownership proof', async () => {
+    const runtimeConfigPath = join(testState.fakeHomeDir, '.claude.json')
+    const externalCredentials = createClaudeCredentialsJson('external@example.com', 'external')
+    const managedAuthPath = join(testState.userDataDir, 'claude-accounts', 'account-1', 'auth')
+    const managedOauthAccount = { accountUuid: 'account-1' }
+    mkdirSync(managedAuthPath, { recursive: true })
+    writeFileSync(
+      runtimeConfigPath,
+      `${JSON.stringify({ oauthAccount: managedOauthAccount })}\n`,
+      'utf-8'
+    )
+    testState.scopedKeychainCredentials = externalCredentials
+    testState.legacyKeychainCredentials = externalCredentials
+    const settings = createSettings({
+      claudeManagedAccounts: [
+        createClaudeAccount('account-1', managedAuthPath, { email: 'managed@example.com' })
+      ],
+      activeClaudeManagedAccountId: 'account-1'
+    })
+    const store = createStore(settings)
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    await service.prepareForClaudeLaunch()
+
+    expect(readRuntimeOauthAccountForTest()).toEqual(managedOauthAccount)
+    expect(testState.scopedKeychainCredentials).toBe(externalCredentials)
+    expect(testState.legacyKeychainCredentials).toBe(externalCredentials)
+  })
+
   it('preserves invalid external runtime oauth metadata when deselecting', async () => {
     const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
     const runtimeConfigPath = join(testState.fakeHomeDir, '.claude.json')
@@ -1774,6 +1845,112 @@ describe('ClaudeRuntimeAuthService', () => {
 
     expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(systemCredentials)
     expect(readFileSync(runtimeConfigPath, 'utf-8')).toBe('{not-json')
+  })
+
+  it('preserves invalid runtime config while materializing managed credentials', async () => {
+    const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+    const runtimeConfigPath = join(testState.fakeHomeDir, '.claude.json')
+    const systemCredentials = createClaudeCredentialsJson('system@example.com', 'system')
+    const managedCredentials = createClaudeCredentialsJson('user@example.com', 'managed')
+    writeFileSync(runtimeCredentialsPath, systemCredentials, 'utf-8')
+    writeFileSync(runtimeConfigPath, '{not-json', 'utf-8')
+    testState.scopedKeychainCredentials = systemCredentials
+    testState.legacyKeychainCredentials = systemCredentials
+    const managedAuthPath = createManagedClaudeAuth(
+      testState.userDataDir,
+      'account-1',
+      managedCredentials
+    )
+    const settings = createSettings({
+      claudeManagedAccounts: [createClaudeAccount('account-1', managedAuthPath)]
+    })
+    const store = createStore(settings)
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    settings.activeClaudeManagedAccountId = 'account-1'
+    await service.syncForCurrentSelection()
+
+    expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(managedCredentials)
+    expect(testState.scopedKeychainCredentials).toBe(managedCredentials)
+    expect(testState.legacyKeychainCredentials).toBe(managedCredentials)
+    expect(readFileSync(runtimeConfigPath, 'utf-8')).toBe('{not-json')
+
+    settings.activeClaudeManagedAccountId = null
+    await service.syncForCurrentSelection()
+
+    expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(systemCredentials)
+    expect(readFileSync(runtimeConfigPath, 'utf-8')).toBe('{not-json')
+  })
+
+  it('preserves non-object runtime config while materializing managed credentials', async () => {
+    const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+    const runtimeConfigPath = join(testState.fakeHomeDir, '.claude.json')
+    const systemCredentials = createClaudeCredentialsJson('system@example.com', 'system')
+    const managedCredentials = createClaudeCredentialsJson('user@example.com', 'managed')
+    writeFileSync(runtimeCredentialsPath, systemCredentials, 'utf-8')
+    writeFileSync(runtimeConfigPath, '[]', 'utf-8')
+    const managedAuthPath = createManagedClaudeAuth(
+      testState.userDataDir,
+      'account-1',
+      managedCredentials
+    )
+    const settings = createSettings({
+      claudeManagedAccounts: [createClaudeAccount('account-1', managedAuthPath)]
+    })
+    const store = createStore(settings)
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    settings.activeClaudeManagedAccountId = 'account-1'
+    await service.syncForCurrentSelection()
+
+    expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(managedCredentials)
+    expect(readFileSync(runtimeConfigPath, 'utf-8')).toBe('[]')
+  })
+
+  it('does not use skipped oauth writes as ownership proof on deselect', async () => {
+    const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+    const runtimeConfigPath = join(testState.fakeHomeDir, '.claude.json')
+    const systemCredentials = createClaudeCredentialsJson('system@example.com', 'system')
+    const managedCredentials = createClaudeCredentialsJson('user@example.com', 'managed')
+    const externalCredentials = createClaudeCredentialsJson('external@example.com', 'external')
+    const managedOauthAccount = { accountUuid: 'account-1' }
+    writeFileSync(runtimeCredentialsPath, systemCredentials, 'utf-8')
+    writeFileSync(runtimeConfigPath, '{not-json', 'utf-8')
+    testState.scopedKeychainCredentials = systemCredentials
+    testState.legacyKeychainCredentials = systemCredentials
+    const managedAuthPath = createManagedClaudeAuth(
+      testState.userDataDir,
+      'account-1',
+      managedCredentials,
+      `${JSON.stringify(managedOauthAccount)}\n`
+    )
+    const settings = createSettings({
+      claudeManagedAccounts: [createClaudeAccount('account-1', managedAuthPath)]
+    })
+    const store = createStore(settings)
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    settings.activeClaudeManagedAccountId = 'account-1'
+    await service.syncForCurrentSelection()
+
+    writeFileSync(runtimeCredentialsPath, externalCredentials, 'utf-8')
+    writeFileSync(
+      runtimeConfigPath,
+      `${JSON.stringify({ oauthAccount: managedOauthAccount })}\n`,
+      'utf-8'
+    )
+    testState.scopedKeychainCredentials = externalCredentials
+    testState.legacyKeychainCredentials = externalCredentials
+    settings.activeClaudeManagedAccountId = null
+    await service.syncForCurrentSelection()
+
+    expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(externalCredentials)
+    expect(readRuntimeOauthAccountForTest()).toEqual(managedOauthAccount)
+    expect(testState.scopedKeychainCredentials).toBe(externalCredentials)
+    expect(testState.legacyKeychainCredentials).toBe(externalCredentials)
   })
 
   it('preserves external oauth logout when managed oauth metadata is null', async () => {
