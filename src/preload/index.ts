@@ -2103,6 +2103,32 @@ const api = {
     popupMenu: (): void => {
       ipcRenderer.send('menu:popup')
     },
+    floatingTerminal: {
+      hide: (): void => {
+        ipcRenderer.send('floating-terminal-window:hide')
+      },
+      toggleMaximized: (): void => {
+        ipcRenderer.send('floating-terminal-window:toggleMaximized')
+      },
+      isMaximized: (): Promise<boolean> =>
+        ipcRenderer.invoke('floating-terminal-window:isMaximized'),
+      onMaximizeChanged: (callback: (isMaximized: boolean) => void): (() => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, isMaximized: boolean) =>
+          callback(isMaximized)
+        ipcRenderer.on('floating-terminal-window:maximize-changed', listener)
+        return () =>
+          ipcRenderer.removeListener('floating-terminal-window:maximize-changed', listener)
+      },
+      togglePinned: (): void => {
+        ipcRenderer.send('floating-terminal-window:togglePinned')
+      },
+      isPinned: (): Promise<boolean> => ipcRenderer.invoke('floating-terminal-window:isPinned'),
+      onPinnedChanged: (callback: (pinned: boolean) => void): (() => void) => {
+        const listener = (_event: Electron.IpcRendererEvent, pinned: boolean) => callback(pinned)
+        ipcRenderer.on('floating-terminal-window:pinned-changed', listener)
+        return () => ipcRenderer.removeListener('floating-terminal-window:pinned-changed', listener)
+      }
+    },
     /** Fired by the main process when the user tries to close the window
      *  (X button, Cmd+Q, etc.). Renderer should show a confirmation dialog
      *  if terminals are still running, then call confirmWindowClose().
