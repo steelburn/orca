@@ -31,6 +31,7 @@ import { setDriverForPty } from '@/lib/pane-manager/mobile-driver-state'
 import { destroyPersistentWebview } from '@/components/browser-pane/webview-registry'
 import { attachMobileMarkdownBridge } from '@/runtime/mobile-markdown-bridge'
 import { detectLanguage } from '@/lib/language-detect'
+import { track } from '@/lib/telemetry'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
 
@@ -226,7 +227,7 @@ export function useIpcEvents(): void {
 
     unsubs.push(
       window.api.ui.onCreateTerminal(
-        ({ requestId, worktreeId, command, title, ptyId, activate }) => {
+        ({ requestId, worktreeId, command, title, ptyId, activate, tabId }) => {
           try {
             const store = useAppStore.getState()
             const shouldActivate = activate !== false
@@ -247,7 +248,12 @@ export function useIpcEvents(): void {
                 ) ??
                 store.createTab(worktreeId, undefined, undefined, {
                   initialPtyId: ptyId,
-                  activate: shouldActivate
+                  activate: shouldActivate,
+                  // Why: tabId hint comes from CLI-spawned PTYs whose env
+                  // already has paneKey=`${tabId}:1` baked in. Adopting the
+                  // tab under the same id keeps hook-event attribution working;
+                  // see docs/cli-terminal-hook-pane-key.md.
+                  ...(tabId ? { id: tabId } : {})
                 }))
               : store.createTab(worktreeId)
             if (shouldActivate) {
@@ -986,6 +992,17 @@ export function useIpcEvents(): void {
       }
       const { exists, title } = resolvePaneKey(store, data.paneKey)
       if (!exists) {
+        // Why: regression signal — pre-fix, CLI-spawned terminals routinely
+        // shipped hook events with an empty/unknown paneKey because main
+        // could not stamp ORCA_PANE_KEY into the PTY env before the tab id
+        // existed. Post-fix this should be near-zero in normal use; a
+        // non-zero rate means a paneKey is escaping into the receiver
+        // without a matching renderer tab. Gated on workspaceSessionReady
+        // above so startup-race pings don't false-positive before tabs
+        // hydrate. See docs/cli-terminal-hook-pane-key.md.
+        track('agent_hook_unattributed', {
+          reason: data.paneKey ? 'unknown_tab_id' : 'empty_pane_key'
+        })
         return
       }
       store.setAgentStatus(data.paneKey, payload, title, {

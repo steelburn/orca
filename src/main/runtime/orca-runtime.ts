@@ -310,7 +310,7 @@ type RuntimeNotifier = {
   createTerminal(worktreeId: string, opts: { command?: string; title?: string }): void
   revealTerminalSession?(
     worktreeId: string,
-    opts: { ptyId: string; title?: string | null; activate?: boolean }
+    opts: { ptyId: string; title?: string | null; activate?: boolean; tabId?: string }
   ):
     | Promise<{ tabId: string; title?: string | null }>
     | { tabId: string; title?: string | null }
@@ -4410,12 +4410,27 @@ export class OrcaRuntimeService {
       const worktree = await this.resolveWorktreeSelector(worktreeSelector)
       const repo = this.store?.getRepo(worktree.repoId)
       const preAllocatedHandle = this.createPreAllocatedTerminalHandle()
+      // Why: mint tabId in main before spawn so paneKey is known at PTY env
+      // build time. Hook-based agent status (Claude/Codex/Cursor/Gemini) keys
+      // off `${tabId}:${paneId}` — without these vars set on the PTY, the
+      // hook payload arrives with an empty paneKey and the renderer cannot
+      // attribute the event. paneId is hard-coded to 1 because this path
+      // never splits and the renderer's nextPaneId starts at 1 for a fresh
+      // tab. See docs/cli-terminal-hook-pane-key.md.
+      const tabId = randomUUID()
+      const paneKey = `${tabId}:1`
+      const env = {
+        ...opts.env,
+        ORCA_PANE_KEY: paneKey,
+        ORCA_TAB_ID: tabId,
+        ORCA_WORKTREE_ID: worktree.id
+      }
       const result = await this.ptyController.spawn({
         cols: 120,
         rows: 40,
         cwd: worktree.path,
         command: opts.command,
-        env: opts.env,
+        env,
         connectionId: repo?.connectionId ?? null,
         worktreeId: worktree.id,
         preAllocatedHandle
@@ -4432,10 +4447,13 @@ export class OrcaRuntimeService {
         try {
           // Why: after the PTY is spawned, renderer tab adoption is best-effort;
           // failing here must not strand a live process without returning a handle.
+          // Pass the pre-minted tabId so the renderer adopts under the same id
+          // already baked into the PTY env — keeps paneKey hook attribution intact.
           await this.notifier.revealTerminalSession(worktree.id, {
             ptyId: result.id,
             title: opts.title ?? null,
-            activate: false
+            activate: false,
+            tabId
           })
           surface = 'visible'
         } catch (err) {

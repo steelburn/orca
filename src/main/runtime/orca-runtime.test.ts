@@ -449,10 +449,21 @@ describe('OrcaRuntimeService', () => {
     })
     expect(result.handle).toMatch(/^term_/)
     expect(createTerminal).not.toHaveBeenCalled()
+    // Why: hook-based agent status keys off `${tabId}:${paneId}`, so main must
+    // pre-allocate the tabId and stamp ORCA_PANE_KEY/TAB_ID/WORKTREE_ID into
+    // the PTY env before spawn. The same tabId is then handed to the renderer
+    // via `revealTerminalSession` so adoption preserves attribution. See
+    // docs/cli-terminal-hook-pane-key.md.
+    const spawnCall = spawn.mock.calls[0]?.[0] as { env?: Record<string, string> } | undefined
+    const spawnedEnv = spawnCall?.env ?? {}
+    expect(spawnedEnv.ORCA_TAB_ID).toMatch(/^[0-9a-f-]+$/)
+    expect(spawnedEnv.ORCA_PANE_KEY).toBe(`${spawnedEnv.ORCA_TAB_ID}:1`)
+    expect(spawnedEnv.ORCA_WORKTREE_ID).toBe(TEST_WORKTREE_ID)
     expect(revealTerminalSession).toHaveBeenCalledWith(TEST_WORKTREE_ID, {
       ptyId: 'pty-bg',
       title: 'worker',
-      activate: false
+      activate: false,
+      tabId: spawnedEnv.ORCA_TAB_ID
     })
   })
 
@@ -512,7 +523,8 @@ describe('OrcaRuntimeService', () => {
       expect(revealTerminalSession).toHaveBeenCalledWith(TEST_WORKTREE_ID, {
         ptyId: 'pty-bg',
         title: null,
-        activate: false
+        activate: false,
+        tabId: expect.stringMatching(/^[0-9a-f-]+$/)
       })
       expect(warn).toHaveBeenCalledWith(
         expect.stringContaining('[terminal-create] failed to create inactive tab for pty-bg:'),
@@ -602,7 +614,11 @@ describe('OrcaRuntimeService', () => {
       tabId: 'tab-adopted',
       worktreeId: TEST_WORKTREE_ID
     })
-    expect(revealTerminalSession).toHaveBeenCalledWith(TEST_WORKTREE_ID, {
+    // Why: createTerminal first reveal stamps activate/tabId; the focus reveal
+    // is the second call and uses the simpler {ptyId, title} shape. Assert the
+    // most recent call (the focus one) so the createTerminal-side reveal does
+    // not shadow this expectation.
+    expect(revealTerminalSession).toHaveBeenLastCalledWith(TEST_WORKTREE_ID, {
       ptyId: 'pty-bg',
       title: 'worker'
     })
@@ -1681,17 +1697,24 @@ describe('OrcaRuntimeService', () => {
       expect.objectContaining({
         cwd: '/tmp/workspaces/runtime-hook-skip',
         command: 'bash /tmp/repo/.git/orca/setup-runner.sh',
-        env: {
+        // Why: createTerminal stamps ORCA_PANE_KEY/TAB_ID/WORKTREE_ID into the
+        // PTY env on top of the caller-supplied env so hook-based agent status
+        // can attribute hook events to a pane. See docs/cli-terminal-hook-pane-key.md.
+        env: expect.objectContaining({
           ORCA_ROOT_PATH: '/tmp/repo',
-          ORCA_WORKTREE_PATH: '/tmp/workspaces/runtime-hook-skip'
-        },
+          ORCA_WORKTREE_PATH: '/tmp/workspaces/runtime-hook-skip',
+          ORCA_TAB_ID: expect.stringMatching(/^[0-9a-f-]+$/),
+          ORCA_PANE_KEY: expect.stringMatching(/^[0-9a-f-]+:1$/),
+          ORCA_WORKTREE_ID: result.worktree.id
+        }),
         worktreeId: result.worktree.id
       })
     )
     expect(revealTerminalSession).toHaveBeenLastCalledWith(result.worktree.id, {
       ptyId: 'pty-setup',
       title: 'Setup',
-      activate: false
+      activate: false,
+      tabId: expect.stringMatching(/^[0-9a-f-]+$/)
     })
   })
 
@@ -1751,7 +1774,8 @@ describe('OrcaRuntimeService', () => {
     expect(revealTerminalSession).toHaveBeenCalledWith(result.worktree.id, {
       ptyId: 'pty-created-worktree',
       title: null,
-      activate: false
+      activate: false,
+      tabId: expect.stringMatching(/^[0-9a-f-]+$/)
     })
   })
 
