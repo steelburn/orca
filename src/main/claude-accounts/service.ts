@@ -289,7 +289,11 @@ export class ClaudeAccountService {
       return await this.captureAuthFromConfigDir(tempConfigDir, status)
     } finally {
       if (process.platform === 'darwin') {
-        await deleteActiveClaudeKeychainCredentialsStrict(tempConfigDir)
+        try {
+          await deleteActiveClaudeKeychainCredentialsStrict(tempConfigDir)
+        } catch (error) {
+          console.warn('[claude-accounts] Failed to clean temporary Claude Keychain item:', error)
+        }
       }
       if (process.platform === 'darwin' && previousLegacyKeychain) {
         // Why: older Claude versions ignored CLAUDE_CONFIG_DIR and wrote the

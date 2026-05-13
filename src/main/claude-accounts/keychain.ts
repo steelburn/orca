@@ -16,11 +16,29 @@ export async function readActiveClaudeKeychainCredentials(
   return null
 }
 
+export async function readActiveClaudeKeychainCredentialsStrict(
+  configDir?: string
+): Promise<string | null> {
+  return readKeychainPassword(getActiveClaudeService(configDir), getKeychainUser())
+}
+
 export async function writeActiveClaudeKeychainCredentials(
   contents: string,
   configDir?: string
 ): Promise<void> {
   await writeKeychainPassword(getActiveClaudeService(configDir), getKeychainUser(), contents)
+}
+
+export async function writeActiveClaudeKeychainCredentialsForRuntime(
+  contents: string,
+  configDir: string
+): Promise<void> {
+  const user = getKeychainUser()
+  const scopedService = getActiveClaudeService(configDir)
+  await writeKeychainPassword(scopedService, user, contents)
+  if (scopedService !== ACTIVE_CLAUDE_SERVICE) {
+    await writeKeychainPassword(ACTIVE_CLAUDE_SERVICE, user, contents)
+  }
 }
 
 export async function deleteActiveClaudeKeychainCredentials(configDir?: string): Promise<void> {

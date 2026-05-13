@@ -47,6 +47,10 @@ vi.mock('./keychain', () => ({
   deleteActiveClaudeKeychainCredentialsStrict: vi.fn(async () => {
     testState.activeKeychainCredentials = null
   }),
+  readActiveClaudeKeychainCredentialsStrict: vi.fn(async () => testState.activeKeychainCredentials),
+  writeActiveClaudeKeychainCredentialsForRuntime: vi.fn(async (contents: string) => {
+    testState.activeKeychainCredentials = contents
+  }),
   readManagedClaudeKeychainCredentials: vi.fn(
     async (accountId: string) => testState.managedKeychainCredentials.get(accountId) ?? null
   ),

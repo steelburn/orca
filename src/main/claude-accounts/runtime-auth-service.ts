@@ -12,8 +12,10 @@ import { ClaudeRuntimePathResolver } from './runtime-paths'
 import {
   deleteActiveClaudeKeychainCredentialsStrict,
   readActiveClaudeKeychainCredentials,
+  readActiveClaudeKeychainCredentialsStrict,
   readManagedClaudeKeychainCredentials,
   writeActiveClaudeKeychainCredentials,
+  writeActiveClaudeKeychainCredentialsForRuntime,
   writeManagedClaudeKeychainCredentials
 } from './keychain'
 
@@ -28,6 +30,8 @@ type ClaudeSystemDefaultSnapshot = {
   credentialsJson: string | null
   configOauthAccount: unknown
   keychainCredentialsJson: string | null
+  scopedKeychainCredentialsJson?: string | null
+  legacyKeychainCredentialsJson?: string | null
   capturedAt: number
 }
 
@@ -175,7 +179,9 @@ export class ClaudeRuntimeAuthService {
     const paths = this.pathResolver.getRuntimePaths()
     this.writeRuntimeCredentials(credentialsJson)
     if (process.platform === 'darwin') {
-      await writeActiveClaudeKeychainCredentials(credentialsJson, paths.configDir)
+      // Why: Claude Code 2.1+ reads the scoped service, while older builds read
+      // the legacy unsuffixed service. Runtime switching must satisfy both.
+      await writeActiveClaudeKeychainCredentialsForRuntime(credentialsJson, paths.configDir)
     }
     this.writeRuntimeOauthAccount(this.readManagedOauthAccount(activeAccount))
     this.lastSyncedAccountId = activeAccount.id
@@ -508,10 +514,18 @@ export class ClaudeRuntimeAuthService {
       ? readFileSync(paths.credentialsPath, 'utf-8')
       : null
     const keychainCredentialsJson = await readActiveClaudeKeychainCredentials(paths.configDir)
+    const scopedKeychainCredentialsJson =
+      process.platform === 'darwin'
+        ? await readActiveClaudeKeychainCredentialsStrict(paths.configDir)
+        : null
+    const legacyKeychainCredentialsJson =
+      process.platform === 'darwin' ? await readActiveClaudeKeychainCredentialsStrict() : null
     const snapshot: ClaudeSystemDefaultSnapshot = {
       credentialsJson,
       configOauthAccount: this.readRuntimeOauthAccount(),
       keychainCredentialsJson,
+      scopedKeychainCredentialsJson,
+      legacyKeychainCredentialsJson,
       capturedAt: Date.now()
     }
     this.writeJson(snapshotPath, snapshot)
@@ -533,6 +547,7 @@ export class ClaudeRuntimeAuthService {
       rmSync(paths.credentialsPath, { force: true })
       if (process.platform === 'darwin') {
         await deleteActiveClaudeKeychainCredentialsStrict(paths.configDir)
+        await deleteActiveClaudeKeychainCredentialsStrict()
       }
       this.lastWrittenCredentialsJson = null
       return
@@ -546,11 +561,26 @@ export class ClaudeRuntimeAuthService {
     this.writeRuntimeOauthAccount(snapshot.configOauthAccount)
     if (process.platform === 'darwin') {
       if (externalState !== 'keychain-change') {
-        await (snapshot.keychainCredentialsJson !== null
-          ? writeActiveClaudeKeychainCredentials(snapshot.keychainCredentialsJson, paths.configDir)
-          : deleteActiveClaudeKeychainCredentialsStrict(paths.configDir))
+        const scopedSnapshot = Object.hasOwn(snapshot, 'scopedKeychainCredentialsJson')
+          ? snapshot.scopedKeychainCredentialsJson
+          : snapshot.keychainCredentialsJson
+        await this.restoreActiveClaudeKeychainCredentials(scopedSnapshot ?? null, paths.configDir)
+        if (Object.hasOwn(snapshot, 'legacyKeychainCredentialsJson')) {
+          await this.restoreActiveClaudeKeychainCredentials(
+            snapshot.legacyKeychainCredentialsJson ?? null
+          )
+        }
       }
     }
+  }
+
+  private async restoreActiveClaudeKeychainCredentials(
+    credentialsJson: string | null,
+    configDir?: string
+  ): Promise<void> {
+    await (credentialsJson !== null
+      ? writeActiveClaudeKeychainCredentials(credentialsJson, configDir)
+      : deleteActiveClaudeKeychainCredentialsStrict(configDir))
   }
 
   // Why: detects whether an external tool (e.g. `claude auth login`) overwrote
@@ -565,14 +595,16 @@ export class ClaudeRuntimeAuthService {
     }
     const paths = this.pathResolver.getRuntimePaths()
     if (!existsSync(paths.credentialsPath)) {
-      const currentKeychainCredentials =
+      const currentScopedKeychainCredentials =
         process.platform === 'darwin'
-          ? await readActiveClaudeKeychainCredentials(paths.configDir)
+          ? await readActiveClaudeKeychainCredentialsStrict(paths.configDir)
           : null
-      if (
-        process.platform === 'darwin' &&
-        currentKeychainCredentials === this.lastWrittenCredentialsJson
-      ) {
+      const currentLegacyKeychainCredentials =
+        process.platform === 'darwin' ? await readActiveClaudeKeychainCredentialsStrict() : null
+      const runtimeKeychainStillPresent =
+        currentScopedKeychainCredentials === this.lastWrittenCredentialsJson ||
+        currentLegacyKeychainCredentials === this.lastWrittenCredentialsJson
+      if (process.platform === 'darwin' && runtimeKeychainStillPresent) {
         return 'none'
       }
       const snapshotPath = this.getSystemDefaultSnapshotPath()
@@ -581,15 +613,17 @@ export class ClaudeRuntimeAuthService {
       return 'file-logout'
     }
     const currentCredentials = readFileSync(paths.credentialsPath, 'utf-8')
-    const currentKeychainCredentials =
+    const currentScopedKeychainCredentials =
       process.platform === 'darwin'
-        ? await readActiveClaudeKeychainCredentials(paths.configDir)
+        ? await readActiveClaudeKeychainCredentialsStrict(paths.configDir)
         : null
+    const currentLegacyKeychainCredentials =
+      process.platform === 'darwin' ? await readActiveClaudeKeychainCredentialsStrict() : null
     if (currentCredentials === this.lastWrittenCredentialsJson) {
-      if (
-        process.platform === 'darwin' &&
-        currentKeychainCredentials !== this.lastWrittenCredentialsJson
-      ) {
+      const runtimeKeychainChanged =
+        currentScopedKeychainCredentials !== this.lastWrittenCredentialsJson ||
+        currentLegacyKeychainCredentials !== this.lastWrittenCredentialsJson
+      if (process.platform === 'darwin' && runtimeKeychainChanged) {
         return 'keychain-change'
       }
       return 'none'

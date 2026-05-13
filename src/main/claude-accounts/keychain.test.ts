@@ -4,7 +4,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   deleteActiveClaudeKeychainCredentials,
   readActiveClaudeKeychainCredentials,
-  writeActiveClaudeKeychainCredentials
+  readActiveClaudeKeychainCredentialsStrict,
+  writeActiveClaudeKeychainCredentials,
+  writeActiveClaudeKeychainCredentialsForRuntime
 } from './keychain'
 
 vi.mock('node:child_process', () => ({
@@ -115,6 +117,61 @@ describe('Claude Keychain credentials', () => {
       process.env.USER || process.env.USERNAME || 'user',
       '-w',
       'credentials-json'
+    ])
+  })
+
+  it('writes runtime credentials to scoped and legacy services for old Claude Code compatibility', async () => {
+    const configDir = '/tmp/orca-claude-login-test'
+    const scopedService = serviceForConfigDir(configDir)
+    execFileMock.mockImplementation((_file, _args, _options, callback) => {
+      invokeExecFileCallback(callback, null, '', '')
+      return null as never
+    })
+
+    await writeActiveClaudeKeychainCredentialsForRuntime('credentials-json', configDir)
+
+    expect(execFileMock.mock.calls.map((call) => call[1])).toEqual([
+      [
+        'add-generic-password',
+        '-U',
+        '-s',
+        scopedService,
+        '-a',
+        process.env.USER || process.env.USERNAME || 'user',
+        '-w',
+        'credentials-json'
+      ],
+      [
+        'add-generic-password',
+        '-U',
+        '-s',
+        'Claude Code-credentials',
+        '-a',
+        process.env.USER || process.env.USERNAME || 'user',
+        '-w',
+        'credentials-json'
+      ]
+    ])
+  })
+
+  it('strictly reads only the requested active credentials service', async () => {
+    const configDir = '/tmp/orca-claude-login-test'
+    const scopedService = serviceForConfigDir(configDir)
+    execFileMock.mockImplementationOnce((_file, _args, _options, callback) => {
+      invokeExecFileCallback(callback, null, 'scoped\n', '')
+      return null as never
+    })
+
+    await expect(readActiveClaudeKeychainCredentialsStrict(configDir)).resolves.toBe('scoped')
+
+    expect(execFileMock).toHaveBeenCalledTimes(1)
+    expect(execFileMock.mock.calls[0][1]).toEqual([
+      'find-generic-password',
+      '-s',
+      scopedService,
+      '-a',
+      process.env.USER || process.env.USERNAME || 'user',
+      '-w'
     ])
   })
 
