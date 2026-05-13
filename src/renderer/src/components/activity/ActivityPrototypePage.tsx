@@ -603,42 +603,42 @@ function ThreadRow({
           </span>
         </span>
       </span>
-      <span className="flex flex-col items-end gap-1 pt-0.5">
-        <span className="flex min-w-16 flex-col items-end gap-1">
-          <span className="relative flex h-6 min-w-16 items-start justify-end">
-            <span className="transition-opacity group-hover:opacity-0">
-              <EventTime timestamp={latest.timestamp} />
-            </span>
-            <span className="absolute right-0 top-0 opacity-0 transition-opacity group-hover:opacity-100">
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="icon-xs"
-                    aria-label={toggleLabel}
-                    onClick={(event) => {
-                      event.stopPropagation()
-                      onToggleRead()
-                    }}
-                    onMouseDown={(event) => event.stopPropagation()}
-                  >
-                    {thread.unread ? <BellOff className="size-3" /> : <Bell className="size-3" />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="left">{toggleLabel}</TooltipContent>
-              </Tooltip>
-            </span>
+      {/* Why (single-line right cluster): keeping time and count on the same
+          row stops the right column from forcing a ~48px height when the
+          left column's prompt is only one line. The row now collapses to
+          fit a 1-line title and grows naturally for 2-line prompts. */}
+      <span className="inline-flex shrink-0 items-center gap-1.5 pt-[3px]">
+        {thread.unread ? (
+          <span className="rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold leading-none text-primary-foreground">
+            New
           </span>
-          <span className="inline-flex items-center gap-1">
-            {thread.unread ? (
-              <span className="rounded-full bg-primary px-1.5 py-0.5 text-[9px] font-semibold leading-none text-primary-foreground">
-                New
-              </span>
-            ) : null}
-            <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal">
-              {thread.events.length}
-            </Badge>
+        ) : null}
+        <Badge variant="outline" className="h-5 px-1.5 text-[10px] font-normal">
+          {thread.events.length}
+        </Badge>
+        <span className="relative inline-flex h-5 min-w-16 items-center justify-end">
+          <span className="transition-opacity group-hover:opacity-0">
+            <EventTime timestamp={latest.timestamp} />
+          </span>
+          <span className="absolute right-0 top-1/2 -translate-y-1/2 opacity-0 transition-opacity group-hover:opacity-100">
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="icon-xs"
+                  aria-label={toggleLabel}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    onToggleRead()
+                  }}
+                  onMouseDown={(event) => event.stopPropagation()}
+                >
+                  {thread.unread ? <BellOff className="size-3" /> : <Bell className="size-3" />}
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="left">{toggleLabel}</TooltipContent>
+            </Tooltip>
           </span>
         </span>
       </span>
