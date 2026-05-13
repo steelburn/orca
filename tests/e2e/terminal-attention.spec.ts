@@ -184,9 +184,11 @@ test.describe('Terminal attention', () => {
     // async PTY pipeline.
     await emitBell(orcaPage, activePtyId)
     const MARKER_TITLE = 'focused-tab-bell-marker'
-    // Why: printf is a shell builtin so it works even when CI launches the
-    // shell with a stripped PATH (no /usr/bin → no `node` resolvable).
-    await execInTerminal(orcaPage, activePtyId, `printf '\\033]0;${MARKER_TITLE}\\007'`)
+    await execInTerminal(
+      orcaPage,
+      activePtyId,
+      `node -e "process.stdout.write('\\u001b]0;${MARKER_TITLE}\\u0007')"`
+    )
 
     await expect
       .poll(
