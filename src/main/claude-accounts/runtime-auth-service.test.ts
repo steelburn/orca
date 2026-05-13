@@ -1766,6 +1766,50 @@ describe('ClaudeRuntimeAuthService', () => {
     }
   })
 
+  it('rejects stale cold-start read-back for inactive matching account', async () => {
+    const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+    const account1ManagedNewer = createClaudeCredentialsJson(
+      'one@example.com',
+      'one-managed-newer',
+      null,
+      5_000
+    )
+    const account1RuntimeStale = createClaudeCredentialsJson(
+      'one@example.com',
+      'one-runtime-stale',
+      null,
+      2_000
+    )
+    const account2Credentials = createClaudeCredentialsJson('two@example.com', 'two', null, 1_000)
+    writeFileSync(runtimeCredentialsPath, account1RuntimeStale, 'utf-8')
+    const managedAuthPath1 = createManagedClaudeAuth(
+      testState.userDataDir,
+      'account-1',
+      account1ManagedNewer
+    )
+    const managedAuthPath2 = createManagedClaudeAuth(
+      testState.userDataDir,
+      'account-2',
+      account2Credentials
+    )
+    const settings = createSettings({
+      claudeManagedAccounts: [
+        createClaudeAccount('account-1', managedAuthPath1, { email: 'one@example.com' }),
+        createClaudeAccount('account-2', managedAuthPath2, { email: 'two@example.com' })
+      ],
+      activeClaudeManagedAccountId: 'account-2'
+    })
+    const store = createStore(settings)
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    await service.syncForCurrentSelection()
+
+    expect(readManagedCredentialsForTest('account-1', managedAuthPath1)).toBe(account1ManagedNewer)
+    expect(readManagedCredentialsForTest('account-2', managedAuthPath2)).toBe(account2Credentials)
+    expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(account2Credentials)
+  })
+
   it('rejects ambiguous Claude read-back instead of choosing a managed account', async () => {
     const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
     const originalCredentials = createClaudeCredentialsJson('same@example.com', 'same-original')

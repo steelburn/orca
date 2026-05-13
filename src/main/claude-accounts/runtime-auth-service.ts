@@ -44,7 +44,7 @@ type ClaudeAuthIdentity = {
 
 type ClaudeReadBackResult = { status: 'unchanged' | 'persisted' | 'rejected' }
 type ClaudeReadBackMatch =
-  | { kind: 'matched'; account: ClaudeManagedAccount }
+  | { kind: 'matched'; account: ClaudeManagedAccount; managedCredentialsJson: string }
   | { kind: 'none' | 'ambiguous' }
 type ClaudeKeychainReadResult =
   | { status: 'captured'; credentialsJson: string | null }
@@ -265,7 +265,7 @@ export class ClaudeRuntimeAuthService {
       // metadata proves runtime is newer than managed storage.
       if (
         this.lastWrittenCredentialsJson === null &&
-        !this.runtimeCredentialsAreFresher(runtimeContents, baselineCredentialsJson)
+        !this.runtimeCredentialsAreFresher(runtimeContents, match.managedCredentialsJson)
       ) {
         return { status: 'rejected' }
       }
@@ -357,7 +357,7 @@ export class ClaudeRuntimeAuthService {
   private async findManagedAccountForRuntimeCredentials(
     runtimeCredentialsJson: string
   ): Promise<ClaudeReadBackMatch> {
-    const matches: ClaudeManagedAccount[] = []
+    const matches: { account: ClaudeManagedAccount; managedCredentialsJson: string }[] = []
     let unverifiableCount = 0
     for (const account of this.store.getSettings().claudeManagedAccounts) {
       const managedCredentialsJson = await this.readManagedCredentials(account)
@@ -371,14 +371,14 @@ export class ClaudeRuntimeAuthService {
         this.readManagedOauthAccount(account)
       )
       if (match === 'match') {
-        matches.push(account)
+        matches.push({ account, managedCredentialsJson })
       } else if (match === 'unverifiable') {
         unverifiableCount += 1
       }
     }
 
     if (matches.length === 1 && unverifiableCount === 0) {
-      return { kind: 'matched', account: matches[0] }
+      return { kind: 'matched', ...matches[0] }
     }
     return { kind: matches.length === 0 && unverifiableCount === 0 ? 'none' : 'ambiguous' }
   }
