@@ -277,7 +277,7 @@ export class ClaudeAccountService {
 
   private async runClaudeLoginAndCapture(): Promise<CapturedClaudeAuth> {
     const tempConfigDir = mkdtempSync(join(tmpdir(), 'orca-claude-login-'))
-    const previousActiveKeychain = await readActiveClaudeKeychainCredentials()
+    const previousLegacyKeychain = await readActiveClaudeKeychainCredentials()
     try {
       await this.runClaudeCommand(['auth', 'login', '--claudeai'], tempConfigDir, LOGIN_TIMEOUT_MS)
       const status = await this.runClaudeCommand(
@@ -288,11 +288,13 @@ export class ClaudeAccountService {
       )
       return await this.captureAuthFromConfigDir(tempConfigDir, status)
     } finally {
-      if (process.platform === 'darwin' && previousActiveKeychain) {
-        // Why: Claude login writes the global active Keychain item even when
-        // CLAUDE_CONFIG_DIR points elsewhere. Restore it so adding an account
-        // does not switch the user's external Claude CLI out from under them.
-        await writeActiveClaudeKeychainCredentials(previousActiveKeychain)
+      if (process.platform === 'darwin') {
+        await deleteActiveClaudeKeychainCredentialsStrict(tempConfigDir)
+      }
+      if (process.platform === 'darwin' && previousLegacyKeychain) {
+        // Why: older Claude versions ignored CLAUDE_CONFIG_DIR and wrote the
+        // legacy active Keychain item. Preserve that external CLI state.
+        await writeActiveClaudeKeychainCredentials(previousLegacyKeychain)
       } else if (process.platform === 'darwin') {
         await deleteActiveClaudeKeychainCredentialsStrict()
       }
@@ -315,7 +317,7 @@ export class ClaudeAccountService {
 
   private async readCapturedCredentials(configDir: string): Promise<string | null> {
     if (process.platform === 'darwin') {
-      return readActiveClaudeKeychainCredentials()
+      return readActiveClaudeKeychainCredentials(configDir)
     }
     const credentialsPath = join(configDir, '.credentials.json')
     return existsSync(credentialsPath) ? readFileSync(credentialsPath, 'utf-8') : null

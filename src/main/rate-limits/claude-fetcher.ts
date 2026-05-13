@@ -1,12 +1,14 @@
 import { readFile } from 'node:fs/promises'
-import { execFile } from 'node:child_process'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import { net, session } from 'electron'
 import type { ProviderRateLimits, RateLimitWindow } from '../../shared/rate-limit-types'
 import { fetchViaPty } from './claude-pty'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
-import { readManagedClaudeKeychainCredentials } from '../claude-accounts/keychain'
+import {
+  readActiveClaudeKeychainCredentials,
+  readManagedClaudeKeychainCredentials
+} from '../claude-accounts/keychain'
 
 const OAUTH_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 const OAUTH_BETA_HEADER = 'oauth-2025-04-20'
@@ -97,36 +99,16 @@ function parseOAuthTokenFromCredentialsJson(raw: string): string | null {
 
 /**
  * Read OAuth token from macOS Keychain.
- * Why: Claude Code v2.x+ stores OAuth credentials in the macOS Keychain
- * under service "Claude Code-credentials". This is the standard location
- * for Claude Max/Pro OAuth tokens. Only returns a token if the keychain
- * entry has a `claudeAiOauth.accessToken` — API key users won't have this.
+ * Why: Claude Code 2.1+ scopes OAuth Keychain services by CLAUDE_CONFIG_DIR;
+ * older builds used the legacy unsuffixed service. The shared reader handles both.
  */
-async function readFromKeychain(): Promise<string | null> {
+async function readFromKeychain(configDir?: string): Promise<string | null> {
   if (process.platform !== 'darwin') {
     return null
   }
 
-  return new Promise<string | null>((resolve) => {
-    const user = process.env.USER ?? ''
-    if (!user) {
-      resolve(null)
-      return
-    }
-
-    execFile(
-      'security',
-      ['find-generic-password', '-s', 'Claude Code-credentials', '-a', user, '-w'],
-      { timeout: 3_000 },
-      (err, stdout) => {
-        if (err || !stdout.trim()) {
-          resolve(null)
-          return
-        }
-        resolve(parseOAuthTokenFromCredentialsJson(stdout.trim()))
-      }
-    )
-  })
+  const credentials = await readActiveClaudeKeychainCredentials(configDir)
+  return credentials ? parseOAuthTokenFromCredentialsJson(credentials) : null
 }
 
 /**
@@ -163,7 +145,7 @@ async function readFromCredentialsFile(configDir?: string): Promise<string | nul
  */
 async function readOAuthCredentials(configDir?: string): Promise<string | null> {
   // 1. macOS Keychain (Claude Max/Pro OAuth)
-  const fromKeychain = await readFromKeychain()
+  const fromKeychain = await readFromKeychain(configDir)
   if (fromKeychain) {
     return fromKeychain
   }

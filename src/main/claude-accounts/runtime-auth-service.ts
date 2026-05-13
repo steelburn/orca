@@ -171,9 +171,10 @@ export class ClaudeRuntimeAuthService {
     if (this.lastSyncedAccountId !== activeAccount.id) {
       this.skipNextReadBackForAccountId = null
     }
+    const paths = this.pathResolver.getRuntimePaths()
     this.writeRuntimeCredentials(credentialsJson)
     if (process.platform === 'darwin') {
-      await writeActiveClaudeKeychainCredentials(credentialsJson)
+      await writeActiveClaudeKeychainCredentials(credentialsJson, paths.configDir)
     }
     this.writeRuntimeOauthAccount(this.readManagedOauthAccount(activeAccount))
     this.lastSyncedAccountId = activeAccount.id
@@ -230,7 +231,8 @@ export class ClaudeRuntimeAuthService {
         this.writeRuntimeCredentials(runtimeContents)
         this.lastWrittenCredentialsJson = runtimeContents
         if (process.platform === 'darwin') {
-          await writeActiveClaudeKeychainCredentials(runtimeContents)
+          const paths = this.pathResolver.getRuntimePaths()
+          await writeActiveClaudeKeychainCredentials(runtimeContents, paths.configDir)
         }
       }
       return { status: 'persisted' }
@@ -251,7 +253,7 @@ export class ClaudeRuntimeAuthService {
       ? readFileSync(paths.credentialsPath, 'utf-8')
       : null
     if (process.platform === 'darwin') {
-      const keychainCredentials = await readActiveClaudeKeychainCredentials()
+      const keychainCredentials = await readActiveClaudeKeychainCredentials(paths.configDir)
       if (this.lastWrittenCredentialsJson === null) {
         if (keychainCredentials && keychainCredentials !== baselineCredentialsJson) {
           return keychainCredentials
@@ -503,7 +505,7 @@ export class ClaudeRuntimeAuthService {
     const credentialsJson = existsSync(paths.credentialsPath)
       ? readFileSync(paths.credentialsPath, 'utf-8')
       : null
-    const keychainCredentialsJson = await readActiveClaudeKeychainCredentials()
+    const keychainCredentialsJson = await readActiveClaudeKeychainCredentials(paths.configDir)
     const snapshot: ClaudeSystemDefaultSnapshot = {
       credentialsJson,
       configOauthAccount: this.readRuntimeOauthAccount(),
@@ -527,7 +529,7 @@ export class ClaudeRuntimeAuthService {
     if (!existsSync(snapshotPath)) {
       rmSync(this.pathResolver.getRuntimePaths().credentialsPath, { force: true })
       if (process.platform === 'darwin') {
-        await deleteActiveClaudeKeychainCredentials()
+        await deleteActiveClaudeKeychainCredentials(this.pathResolver.getRuntimePaths().configDir)
       }
       this.lastWrittenCredentialsJson = null
       return
@@ -542,8 +544,11 @@ export class ClaudeRuntimeAuthService {
     if (process.platform === 'darwin') {
       if (externalState !== 'keychain-change') {
         await (snapshot.keychainCredentialsJson !== null
-          ? writeActiveClaudeKeychainCredentials(snapshot.keychainCredentialsJson)
-          : deleteActiveClaudeKeychainCredentials())
+          ? writeActiveClaudeKeychainCredentials(
+              snapshot.keychainCredentialsJson,
+              this.pathResolver.getRuntimePaths().configDir
+            )
+          : deleteActiveClaudeKeychainCredentials(this.pathResolver.getRuntimePaths().configDir))
       }
     }
   }
@@ -561,7 +566,9 @@ export class ClaudeRuntimeAuthService {
     const paths = this.pathResolver.getRuntimePaths()
     if (!existsSync(paths.credentialsPath)) {
       const currentKeychainCredentials =
-        process.platform === 'darwin' ? await readActiveClaudeKeychainCredentials() : null
+        process.platform === 'darwin'
+          ? await readActiveClaudeKeychainCredentials(paths.configDir)
+          : null
       if (
         process.platform === 'darwin' &&
         currentKeychainCredentials === this.lastWrittenCredentialsJson
@@ -575,7 +582,9 @@ export class ClaudeRuntimeAuthService {
     }
     const currentCredentials = readFileSync(paths.credentialsPath, 'utf-8')
     const currentKeychainCredentials =
-      process.platform === 'darwin' ? await readActiveClaudeKeychainCredentials() : null
+      process.platform === 'darwin'
+        ? await readActiveClaudeKeychainCredentials(paths.configDir)
+        : null
     if (currentCredentials === this.lastWrittenCredentialsJson) {
       if (
         process.platform === 'darwin' &&
