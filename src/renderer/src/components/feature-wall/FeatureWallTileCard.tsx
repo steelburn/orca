@@ -32,8 +32,9 @@ export function FeatureWallTileCard(props: {
   const [posterFailed, setPosterFailed] = useState(false)
   const [gifFailed, setGifFailed] = useState(false)
   const showPoster = posterUrl !== null && !posterFailed
-  const showGif = isPlaying && gifUrl !== null && !gifFailed
-  const textOnly = !showGif && !showPoster
+  const showGif = tile.kind === 'media' && isPlaying && gifUrl !== null && !gifFailed
+  const showMockup = tile.kind === 'agent-status-mockup'
+  const textOnly = !showMockup && !showGif && !showPoster
 
   useEffect(() => {
     setPosterFailed(false)
@@ -58,6 +59,7 @@ export function FeatureWallTileCard(props: {
       onKeyDown={onKeyDown}
     >
       <div className="relative aspect-[16/10] overflow-hidden bg-muted">
+        {showMockup ? <AgentStatusMockup /> : null}
         {showPoster ? (
           <img
             src={posterUrl}
@@ -88,11 +90,25 @@ export function FeatureWallTileCard(props: {
       <div className={cn('space-y-1 p-3', textOnly && 'invisible')}>
         <div className="truncate text-sm font-semibold text-foreground">{tile.title}</div>
         <p className="line-clamp-2 text-xs leading-snug text-muted-foreground">{tile.caption}</p>
-        {tile.affordanceHint ? (
-          <div className="pt-1 text-[10px] font-medium uppercase text-muted-foreground">
-            {tile.affordanceHint}
-          </div>
-        ) : null}
+      </div>
+    </div>
+  )
+}
+
+function AgentStatusMockup(): JSX.Element {
+  return (
+    <div className="flex size-full flex-col justify-center gap-2 bg-muted p-5">
+      <div className="rounded-md border border-border/70 bg-background/70 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+        <span className="text-emerald-600 dark:text-emerald-300">● Claude Code</span> · finished
+        tests, pushing
+      </div>
+      <div className="rounded-md border border-border/70 bg-background/70 px-3 py-2 font-mono text-[11px] text-muted-foreground">
+        <span className="text-emerald-600 dark:text-emerald-300">● Codex</span> · refactoring
+        handlers
+      </div>
+      <div className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 font-mono text-[11px] text-amber-700 dark:text-amber-100/80">
+        <span className="text-amber-700 dark:text-amber-100">● OpenCode</span> · blocked on API
+        response
       </div>
     </div>
   )

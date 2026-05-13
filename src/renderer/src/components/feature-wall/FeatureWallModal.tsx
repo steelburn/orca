@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { JSX, KeyboardEvent, RefObject } from 'react'
 import {
   FEATURE_WALL_TILES,
+  isFeatureWallMediaTile,
   type FeatureWallSurface,
   type FeatureWallTileId
 } from '../../../../shared/feature-wall-tiles'
@@ -146,6 +147,13 @@ export default function FeatureWallModal(): JSX.Element | null {
   const tileRefs = useRef<(HTMLDivElement | null)[]>([])
   const gridRef = useRef<HTMLDivElement | null>(null)
   const columnCount = useGridColumnCount(gridRef, isOpen)
+  const mediaTileIndexes = useMemo(
+    () =>
+      FEATURE_WALL_TILES.map((tile, index) => (isFeatureWallMediaTile(tile) ? index : -1)).filter(
+        (index) => index >= 0
+      ),
+    []
+  )
   const telemetryRef = useRef<{
     open: boolean
     openedAtMs: number
@@ -160,7 +168,7 @@ export default function FeatureWallModal(): JSX.Element | null {
 
   const assetUrlsByTileId = useMemo(() => {
     return new Map(
-      FEATURE_WALL_TILES.map((tile) => [
+      FEATURE_WALL_TILES.filter(isFeatureWallMediaTile).map((tile) => [
         tile.id,
         {
           gifUrl: toAssetUrl(assetBaseUrl, tile.gifPath),
@@ -207,10 +215,15 @@ export default function FeatureWallModal(): JSX.Element | null {
     }
 
     const timer = window.setInterval(() => {
-      setAutoIndex((index) => (index + 1) % FEATURE_WALL_TILES.length)
+      setAutoIndex((index) => {
+        const currentPosition = mediaTileIndexes.indexOf(index)
+        const nextPosition =
+          currentPosition === -1 ? 0 : (currentPosition + 1) % mediaTileIndexes.length
+        return mediaTileIndexes[nextPosition] ?? 0
+      })
     }, AUTO_ROTATE_MS)
     return () => window.clearInterval(timer)
-  }, [isOpen, manualTileId, prefersReducedMotion])
+  }, [isOpen, manualTileId, mediaTileIndexes, prefersReducedMotion])
 
   useEffect(() => {
     if (!isOpen || manualTileId === null) {

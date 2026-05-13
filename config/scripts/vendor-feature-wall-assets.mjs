@@ -15,17 +15,64 @@ const DEFAULT_MARKETING_REPO = path.join(
   'orca-marketing-website'
 )
 const MARKETING_REPO = process.env.ORCA_MARKETING_REPO || DEFAULT_MARKETING_REPO
-const SOURCE_ROOT = path.join(MARKETING_REPO, 'public', 'whats-new')
 const DEST_ROOT = path.join(ROOT, 'resources', 'onboarding', 'feature-wall')
 
 const TILES = [
-  { id: 'tile-01', sourceName: 'orca-design-mode' },
-  { id: 'tile-02', sourceName: 'feature-wall-02' },
-  { id: 'tile-03', sourceName: 'feature-wall-03' },
-  { id: 'tile-04', sourceName: 'feature-wall-04' },
-  { id: 'tile-05', sourceName: 'ssh-demo' },
-  { id: 'tile-06', sourceName: 'codex-account-switcher' },
-  { id: 'tile-07', sourceName: 'annotate-ai-diff' }
+  {
+    id: 'tile-01',
+    gifRelativePath: 'public/whats-new/agent-statuses.gif',
+    posterRelativePath: 'public/whats-new/posters/agent-statuses.jpg'
+  },
+  {
+    id: 'tile-02',
+    gifRelativePath: 'public/whats-new/ghostty-style-terminal.gif',
+    posterRelativePath: 'public/whats-new/posters/ghostty-style-terminal.jpg'
+  },
+  {
+    id: 'tile-04',
+    gifRelativePath: 'public/whats-new/any-cli-agent.gif',
+    posterRelativePath: 'public/whats-new/posters/any-cli-agent.jpg'
+  },
+  {
+    id: 'tile-05',
+    gifRelativePath: 'public/whats-new/orca-design-mode.gif',
+    posterRelativePath: 'public/whats-new/posters/orca-design-mode.jpg'
+  },
+  {
+    id: 'tile-06',
+    gifRelativePath: 'public/whats-new/ssh-demo.gif',
+    posterRelativePath: 'public/whats-new/posters/ssh-demo.jpg'
+  },
+  {
+    id: 'tile-07',
+    gifRelativePath: 'public/file-drag.gif',
+    posterRelativePath: 'public/whats-new/posters/file-drag.jpg'
+  },
+  {
+    id: 'tile-08',
+    gifRelativePath: 'public/whats-new/annotate-ai-diff.gif',
+    posterRelativePath: 'public/whats-new/posters/annotate-ai-diff.jpg'
+  },
+  {
+    id: 'tile-09',
+    gifRelativePath: 'public/whats-new/orca-cli-demo.gif',
+    posterRelativePath: 'public/whats-new/posters/orca-cli-demo.jpg'
+  },
+  {
+    id: 'tile-10',
+    gifRelativePath: 'public/whats-new/keyboard-native.gif',
+    posterRelativePath: 'public/whats-new/posters/keyboard-native.jpg'
+  },
+  {
+    id: 'tile-11',
+    gifRelativePath: 'public/whats-new/codex-account-switcher.gif',
+    posterRelativePath: 'public/whats-new/posters/codex-account-switcher.jpg'
+  },
+  {
+    id: 'tile-12',
+    gifRelativePath: 'public/whats-new/orca-markdown-editor.gif',
+    posterRelativePath: 'public/whats-new/posters/orca-markdown-editor.jpg'
+  }
 ]
 
 function gitRecordedAtSeconds(marketingRelativePath) {
@@ -48,13 +95,11 @@ function gitRecordedAtSeconds(marketingRelativePath) {
 await mkdir(DEST_ROOT, { recursive: true })
 
 for (const tile of TILES) {
-  const gifRelativePath = ['public', 'whats-new', `${tile.sourceName}.gif`].join('/')
-  const posterRelativePath = ['public', 'whats-new', 'posters', `${tile.sourceName}.jpg`].join('/')
-  const sourceGif = path.join(SOURCE_ROOT, `${tile.sourceName}.gif`)
-  const sourcePoster = path.join(SOURCE_ROOT, 'posters', `${tile.sourceName}.jpg`)
+  const sourceGif = path.join(MARKETING_REPO, ...tile.gifRelativePath.split('/'))
+  const sourcePoster = path.join(MARKETING_REPO, ...tile.posterRelativePath.split('/'))
   const destGif = path.join(DEST_ROOT, `${tile.id}.gif`)
   const destPoster = path.join(DEST_ROOT, `${tile.id}.poster.jpg`)
-  const recordedAtSeconds = gitRecordedAtSeconds(gifRelativePath)
+  const recordedAtSeconds = gitRecordedAtSeconds(tile.gifRelativePath)
 
   await copyFile(sourceGif, destGif)
   await copyFile(sourcePoster, destPoster)
@@ -65,13 +110,13 @@ for (const tile of TILES) {
         recordedAtUnixSeconds: recordedAtSeconds,
         recordedAtIso: new Date(recordedAtSeconds * 1000).toISOString(),
         marketingRepo: MARKETING_REPO,
-        sourceGif: gifRelativePath,
-        sourcePoster: posterRelativePath
+        sourceGif: tile.gifRelativePath,
+        sourcePoster: tile.posterRelativePath
       },
       null,
       2
     )}\n`
   )
 
-  console.log(`Vendored ${tile.sourceName} -> ${tile.id}`)
+  console.log(`Vendored ${tile.gifRelativePath} -> ${tile.id}`)
 }

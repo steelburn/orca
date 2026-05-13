@@ -109,7 +109,12 @@ export const featureWallTileIdSchema = z.enum([
   'tile-04',
   'tile-05',
   'tile-06',
-  'tile-07'
+  'tile-07',
+  'tile-08',
+  'tile-09',
+  'tile-10',
+  'tile-11',
+  'tile-12'
 ])
 export type FeatureWallTileIdTelemetry = z.infer<typeof featureWallTileIdSchema>
 

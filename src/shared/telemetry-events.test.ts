@@ -185,7 +185,7 @@ describe('feature wall schemas', () => {
     expect(
       eventSchemas.feature_wall_tile_focused.safeParse({
         surface: 'help_tour',
-        tile_id: 'tile-07'
+        tile_id: 'tile-12'
       }).success
     ).toBe(true)
     expect(

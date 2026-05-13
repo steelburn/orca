@@ -55,7 +55,7 @@ The events we send:
 - `feature_chip_shown` / `feature_chip_clicked` / `feature_chip_dismissed` — `is_second_chance` boolean only.
 - `feature_wall_opened` — `surface`: `chip` / `help_tour`.
 - `feature_wall_closed` — `surface` plus `dwell_ms`.
-- `feature_wall_tile_focused` — `surface` plus `tile_id` (`tile-01` through `tile-07`).
+- `feature_wall_tile_focused` — `surface` plus `tile_id` (`tile-01` through `tile-12`).
 
 PostHog also records its standard feature-flag evaluation event when Orca resolves the `feature_wall_chip` experiment assignment. That event uses the same anonymous `install_id` and the flag key / variant; Orca does not attach user content to it.
 
