@@ -239,7 +239,7 @@ export class ClaudeRuntimeAuthService {
         this.lastWrittenCredentialsJson = runtimeContents
         if (process.platform === 'darwin') {
           const paths = this.pathResolver.getRuntimePaths()
-          await writeActiveClaudeKeychainCredentials(runtimeContents, paths.configDir)
+          await writeActiveClaudeKeychainCredentialsForRuntime(runtimeContents, paths.configDir)
         }
       }
       return { status: 'persisted' }
@@ -260,18 +260,33 @@ export class ClaudeRuntimeAuthService {
       ? readFileSync(paths.credentialsPath, 'utf-8')
       : null
     if (process.platform === 'darwin') {
-      const keychainCredentials = await readActiveClaudeKeychainCredentials(paths.configDir)
+      const scopedKeychainCredentials = await readActiveClaudeKeychainCredentialsStrict(
+        paths.configDir
+      )
+      const legacyKeychainCredentials = await readActiveClaudeKeychainCredentialsStrict()
       if (this.lastWrittenCredentialsJson === null) {
-        if (keychainCredentials && keychainCredentials !== baselineCredentialsJson) {
-          return keychainCredentials
+        if (scopedKeychainCredentials && scopedKeychainCredentials !== baselineCredentialsJson) {
+          return scopedKeychainCredentials
+        }
+        if (legacyKeychainCredentials && legacyKeychainCredentials !== baselineCredentialsJson) {
+          return legacyKeychainCredentials
         }
         if (fileCredentials && fileCredentials !== baselineCredentialsJson) {
           return fileCredentials
         }
-        return keychainCredentials ?? fileCredentials
+        return scopedKeychainCredentials ?? legacyKeychainCredentials ?? fileCredentials
       }
-      if (keychainCredentials && keychainCredentials !== this.lastWrittenCredentialsJson) {
-        return keychainCredentials
+      if (
+        scopedKeychainCredentials &&
+        scopedKeychainCredentials !== this.lastWrittenCredentialsJson
+      ) {
+        return scopedKeychainCredentials
+      }
+      if (
+        legacyKeychainCredentials &&
+        legacyKeychainCredentials !== this.lastWrittenCredentialsJson
+      ) {
+        return legacyKeychainCredentials
       }
     }
     if (!fileCredentials) {

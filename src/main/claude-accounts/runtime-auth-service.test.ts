@@ -19,6 +19,8 @@ const testState = {
   userDataDir: '',
   fakeHomeDir: '',
   activeKeychainCredentials: null as string | null,
+  scopedKeychainCredentials: null as string | null,
+  legacyKeychainCredentials: null as string | null,
   managedKeychainCredentials: new Map<string, string>()
 }
 
@@ -37,18 +39,45 @@ vi.mock('node:os', async () => {
 })
 
 vi.mock('./keychain', () => ({
-  readActiveClaudeKeychainCredentials: vi.fn(async () => testState.activeKeychainCredentials),
-  writeActiveClaudeKeychainCredentials: vi.fn(async (contents: string) => {
+  readActiveClaudeKeychainCredentials: vi.fn(async (configDir?: string) => {
+    if (configDir) {
+      return (
+        testState.scopedKeychainCredentials ??
+        testState.legacyKeychainCredentials ??
+        testState.activeKeychainCredentials
+      )
+    }
+    return testState.legacyKeychainCredentials ?? testState.activeKeychainCredentials
+  }),
+  writeActiveClaudeKeychainCredentials: vi.fn(async (contents: string, configDir?: string) => {
+    if (configDir) {
+      testState.scopedKeychainCredentials = contents
+    } else {
+      testState.legacyKeychainCredentials = contents
+    }
     testState.activeKeychainCredentials = contents
   }),
   deleteActiveClaudeKeychainCredentials: vi.fn(async () => {
+    testState.scopedKeychainCredentials = null
+    testState.legacyKeychainCredentials = null
     testState.activeKeychainCredentials = null
   }),
-  deleteActiveClaudeKeychainCredentialsStrict: vi.fn(async () => {
+  deleteActiveClaudeKeychainCredentialsStrict: vi.fn(async (configDir?: string) => {
+    if (configDir) {
+      testState.scopedKeychainCredentials = null
+    } else {
+      testState.legacyKeychainCredentials = null
+    }
     testState.activeKeychainCredentials = null
   }),
-  readActiveClaudeKeychainCredentialsStrict: vi.fn(async () => testState.activeKeychainCredentials),
+  readActiveClaudeKeychainCredentialsStrict: vi.fn(async (configDir?: string) =>
+    configDir
+      ? (testState.scopedKeychainCredentials ?? testState.activeKeychainCredentials)
+      : (testState.legacyKeychainCredentials ?? testState.activeKeychainCredentials)
+  ),
   writeActiveClaudeKeychainCredentialsForRuntime: vi.fn(async (contents: string) => {
+    testState.scopedKeychainCredentials = contents
+    testState.legacyKeychainCredentials = contents
     testState.activeKeychainCredentials = contents
   }),
   readManagedClaudeKeychainCredentials: vi.fn(
@@ -159,6 +188,8 @@ describe('ClaudeRuntimeAuthService', () => {
     vi.resetModules()
     vi.clearAllMocks()
     testState.activeKeychainCredentials = null
+    testState.scopedKeychainCredentials = null
+    testState.legacyKeychainCredentials = null
     testState.managedKeychainCredentials.clear()
     testState.userDataDir = mkdtempSync(join(tmpdir(), 'orca-claude-runtime-'))
     testState.fakeHomeDir = mkdtempSync(join(tmpdir(), 'orca-claude-home-'))
@@ -782,6 +813,8 @@ describe('ClaudeRuntimeAuthService', () => {
 
     rmSync(runtimeCredentialsPath, { force: true })
     testState.activeKeychainCredentials = null
+    testState.scopedKeychainCredentials = null
+    testState.legacyKeychainCredentials = null
     settings.activeClaudeManagedAccountId = null
     await service.syncForCurrentSelection()
 
@@ -811,11 +844,44 @@ describe('ClaudeRuntimeAuthService', () => {
     const service = new ClaudeRuntimeAuthService(store as never)
     await service.syncForCurrentSelection()
 
-    testState.activeKeychainCredentials = refreshedCredentials
+    testState.scopedKeychainCredentials = refreshedCredentials
     await service.syncForCurrentSelection()
 
     expect(readManagedCredentialsForTest('account-1', managedAuthPath)).toBe(refreshedCredentials)
     expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(refreshedCredentials)
+  })
+
+  it('reads back refreshed legacy keychain credentials on old Claude Code builds', async () => {
+    if (process.platform !== 'darwin') {
+      return
+    }
+
+    const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+    const originalCredentials = createClaudeCredentialsJson('user@example.com', 'original')
+    const refreshedCredentials = createClaudeCredentialsJson('user@example.com', 'refreshed')
+    const managedAuthPath = createManagedClaudeAuth(
+      testState.userDataDir,
+      'account-1',
+      originalCredentials
+    )
+    const settings = createSettings({
+      claudeManagedAccounts: [createClaudeAccount('account-1', managedAuthPath)],
+      activeClaudeManagedAccountId: 'account-1'
+    })
+    const store = createStore(settings)
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    await service.syncForCurrentSelection()
+
+    testState.scopedKeychainCredentials = originalCredentials
+    testState.legacyKeychainCredentials = refreshedCredentials
+    await service.syncForCurrentSelection()
+
+    expect(readManagedCredentialsForTest('account-1', managedAuthPath)).toBe(refreshedCredentials)
+    expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(refreshedCredentials)
+    expect(testState.scopedKeychainCredentials).toBe(refreshedCredentials)
+    expect(testState.legacyKeychainCredentials).toBe(refreshedCredentials)
   })
 
   it('restores system default when mismatched Claude keychain auth appears before deselect', async () => {
