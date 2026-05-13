@@ -28,6 +28,7 @@ import {
   deleteActiveClaudeKeychainCredentialsStrict,
   deleteManagedClaudeKeychainCredentials,
   readActiveClaudeKeychainCredentials,
+  readActiveClaudeKeychainCredentialsStrict,
   writeActiveClaudeKeychainCredentials,
   writeManagedClaudeKeychainCredentials
 } from './keychain'
@@ -286,7 +287,7 @@ export class ClaudeAccountService {
         STATUS_TIMEOUT_MS,
         { allowFailure: true }
       )
-      return await this.captureAuthFromConfigDir(tempConfigDir, status)
+      return await this.captureAuthFromConfigDir(tempConfigDir, status, previousLegacyKeychain)
     } finally {
       if (process.platform === 'darwin') {
         try {
@@ -308,9 +309,10 @@ export class ClaudeAccountService {
 
   private async captureAuthFromConfigDir(
     configDir: string,
-    statusOutput: string
+    statusOutput: string,
+    previousLegacyKeychain: string | null
   ): Promise<CapturedClaudeAuth> {
-    const credentialsJson = await this.readCapturedCredentials(configDir)
+    const credentialsJson = await this.readCapturedCredentials(configDir, previousLegacyKeychain)
     if (!credentialsJson) {
       throw new Error('Claude login completed, but no OAuth credentials were captured.')
     }
@@ -319,9 +321,17 @@ export class ClaudeAccountService {
     return { credentialsJson, oauthAccount, identity }
   }
 
-  private async readCapturedCredentials(configDir: string): Promise<string | null> {
+  private async readCapturedCredentials(
+    configDir: string,
+    previousLegacyKeychain: string | null
+  ): Promise<string | null> {
     if (process.platform === 'darwin') {
-      return readActiveClaudeKeychainCredentials(configDir)
+      const scopedCredentialsJson = await readActiveClaudeKeychainCredentialsStrict(configDir)
+      if (scopedCredentialsJson) {
+        return scopedCredentialsJson
+      }
+      const legacyCredentialsJson = await readActiveClaudeKeychainCredentialsStrict()
+      return legacyCredentialsJson === previousLegacyKeychain ? null : legacyCredentialsJson
     }
     const credentialsPath = join(configDir, '.credentials.json')
     return existsSync(credentialsPath) ? readFileSync(credentialsPath, 'utf-8') : null

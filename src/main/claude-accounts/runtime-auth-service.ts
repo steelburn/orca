@@ -79,7 +79,7 @@ export class ClaudeRuntimeAuthService {
     await this.serializeMutation(async () => {
       const settings = this.store.getSettings()
       if (!settings.activeClaudeManagedAccountId) {
-        await this.restoreSystemDefaultSnapshot({ detectExternalLogin: true })
+        await this.restoreSystemDefaultSnapshot()
         this.lastSyncedAccountId = null
         return
       }
@@ -120,20 +120,22 @@ export class ClaudeRuntimeAuthService {
       settings.claudeManagedAccounts,
       this.lastSyncedAccountId
     )
-    let outgoingReadBackResult: ClaudeReadBackResult = { status: 'unchanged' }
+    const previousManagedCredentialsJson = previousAccount
+      ? await this.readManagedCredentials(previousAccount)
+      : null
     if (previousAccount && previousAccount.id !== activeAccount?.id) {
-      outgoingReadBackResult = await this.readBackRefreshedTokensForAccount(previousAccount, {
-        updateLastWrittenCredentialsJson: true
-      })
+      if (previousManagedCredentialsJson) {
+        await this.readBackRefreshedTokens(previousManagedCredentialsJson, {
+          updateLastWrittenCredentialsJson: true
+        })
+      }
     }
     if (!activeAccount) {
       if (settings.activeClaudeManagedAccountId) {
         this.store.updateSettings({ activeClaudeManagedAccountId: null })
       }
       if (this.lastSyncedAccountId !== null) {
-        await this.restoreSystemDefaultSnapshot({
-          detectExternalLogin: outgoingReadBackResult.status !== 'rejected'
-        })
+        await this.restoreSystemDefaultSnapshot(previousManagedCredentialsJson)
         this.lastSyncedAccountId = null
       }
       return
@@ -146,7 +148,7 @@ export class ClaudeRuntimeAuthService {
       )
       this.store.updateSettings({ activeClaudeManagedAccountId: null })
       if (this.lastSyncedAccountId !== null) {
-        await this.restoreSystemDefaultSnapshot({ detectExternalLogin: true })
+        await this.restoreSystemDefaultSnapshot(previousManagedCredentialsJson)
         this.lastSyncedAccountId = null
       }
       return
@@ -293,17 +295,6 @@ export class ClaudeRuntimeAuthService {
       return null
     }
     return fileCredentials
-  }
-
-  private async readBackRefreshedTokensForAccount(
-    account: ClaudeManagedAccount,
-    options: { updateLastWrittenCredentialsJson: boolean }
-  ): Promise<ClaudeReadBackResult> {
-    const managedCredentialsJson = await this.readManagedCredentials(account)
-    if (!managedCredentialsJson) {
-      return { status: 'unchanged' }
-    }
-    return this.readBackRefreshedTokens(managedCredentialsJson, options)
   }
 
   private getPreparation(): ClaudeRuntimeAuthPreparation {
@@ -546,46 +537,79 @@ export class ClaudeRuntimeAuthService {
     this.writeJson(snapshotPath, snapshot)
   }
 
-  private async restoreSystemDefaultSnapshot(options: {
-    detectExternalLogin: boolean
-  }): Promise<void> {
-    const externalState = options.detectExternalLogin
-      ? await this.detectExternalLoginAndUpdateSnapshot()
-      : 'none'
-    if (externalState === 'file-logout') {
-      return
-    }
-
+  private async restoreSystemDefaultSnapshot(ownedCredentialsJson?: string | null): Promise<void> {
     const snapshotPath = this.getSystemDefaultSnapshotPath()
     const paths = this.pathResolver.getRuntimePaths()
-    if (!existsSync(snapshotPath)) {
-      rmSync(paths.credentialsPath, { force: true })
-      if (process.platform === 'darwin') {
-        await deleteActiveClaudeKeychainCredentialsStrict(paths.configDir)
-        await deleteActiveClaudeKeychainCredentialsStrict()
-      }
-      this.lastWrittenCredentialsJson = null
-      return
+    const previouslyWrittenCredentialsJson =
+      this.lastWrittenCredentialsJson ?? ownedCredentialsJson ?? null
+    const snapshot = existsSync(snapshotPath)
+      ? (JSON.parse(readFileSync(snapshotPath, 'utf-8')) as ClaudeSystemDefaultSnapshot)
+      : null
+
+    const restoredCredentials = this.restoreRuntimeCredentialsIfOwned(
+      snapshot?.credentialsJson ?? null,
+      previouslyWrittenCredentialsJson
+    )
+    if (restoredCredentials && snapshot) {
+      this.writeRuntimeOauthAccount(snapshot.configOauthAccount)
     }
-    const snapshot = JSON.parse(readFileSync(snapshotPath, 'utf-8')) as ClaudeSystemDefaultSnapshot
-    if (snapshot.credentialsJson !== null) {
-      this.writeRuntimeCredentials(snapshot.credentialsJson)
-    } else {
-      rmSync(this.pathResolver.getRuntimePaths().credentialsPath, { force: true })
-    }
-    this.writeRuntimeOauthAccount(snapshot.configOauthAccount)
     if (process.platform === 'darwin') {
-      if (externalState !== 'keychain-change') {
-        const scopedSnapshot = Object.hasOwn(snapshot, 'scopedKeychainCredentialsJson')
+      const scopedSnapshot = snapshot
+        ? Object.hasOwn(snapshot, 'scopedKeychainCredentialsJson')
           ? snapshot.scopedKeychainCredentialsJson
           : snapshot.keychainCredentialsJson
-        await this.restoreActiveClaudeKeychainCredentials(scopedSnapshot ?? null, paths.configDir)
-        if (Object.hasOwn(snapshot, 'legacyKeychainCredentialsJson')) {
-          await this.restoreActiveClaudeKeychainCredentials(
-            snapshot.legacyKeychainCredentialsJson ?? null
-          )
-        }
-      }
+        : null
+      const legacySnapshot = snapshot
+        ? Object.hasOwn(snapshot, 'legacyKeychainCredentialsJson')
+          ? snapshot.legacyKeychainCredentialsJson
+          : snapshot.keychainCredentialsJson
+        : null
+      await this.restoreUnchangedActiveClaudeKeychainCredentials(
+        scopedSnapshot ?? null,
+        previouslyWrittenCredentialsJson,
+        paths.configDir
+      )
+      await this.restoreUnchangedActiveClaudeKeychainCredentials(
+        legacySnapshot ?? null,
+        previouslyWrittenCredentialsJson
+      )
+    }
+    this.lastWrittenCredentialsJson = null
+  }
+
+  private restoreRuntimeCredentialsIfOwned(
+    credentialsJson: string | null,
+    previouslyWrittenCredentialsJson: string | null
+  ): boolean {
+    if (previouslyWrittenCredentialsJson === null) {
+      return false
+    }
+    const paths = this.pathResolver.getRuntimePaths()
+    const currentCredentialsJson = existsSync(paths.credentialsPath)
+      ? readFileSync(paths.credentialsPath, 'utf-8')
+      : null
+    if (currentCredentialsJson !== previouslyWrittenCredentialsJson) {
+      return false
+    }
+    if (credentialsJson !== null) {
+      this.writeRuntimeCredentials(credentialsJson)
+    } else {
+      rmSync(paths.credentialsPath, { force: true })
+    }
+    return true
+  }
+
+  private async restoreUnchangedActiveClaudeKeychainCredentials(
+    credentialsJson: string | null,
+    previouslyWrittenCredentialsJson: string | null,
+    configDir?: string
+  ): Promise<void> {
+    const currentCredentialsJson = await readActiveClaudeKeychainCredentialsStrict(configDir)
+    if (
+      previouslyWrittenCredentialsJson !== null &&
+      currentCredentialsJson === previouslyWrittenCredentialsJson
+    ) {
+      await this.restoreActiveClaudeKeychainCredentials(credentialsJson, configDir)
     }
   }
 
@@ -596,57 +620,6 @@ export class ClaudeRuntimeAuthService {
     await (credentialsJson !== null
       ? writeActiveClaudeKeychainCredentials(credentialsJson, configDir)
       : deleteActiveClaudeKeychainCredentialsStrict(configDir))
-  }
-
-  // Why: detects whether an external tool (e.g. `claude auth login`) overwrote
-  // the credentials file while a managed account was active. If the file
-  // differs from what Orca last wrote, that external login becomes the new
-  // system default — no manual "refresh" button needed.
-  private async detectExternalLoginAndUpdateSnapshot(): Promise<
-    'none' | 'file-logout' | 'keychain-change'
-  > {
-    if (this.lastWrittenCredentialsJson === null) {
-      return 'none'
-    }
-    const paths = this.pathResolver.getRuntimePaths()
-    if (!existsSync(paths.credentialsPath)) {
-      const currentScopedKeychainCredentials =
-        process.platform === 'darwin'
-          ? await readActiveClaudeKeychainCredentialsStrict(paths.configDir)
-          : null
-      const currentLegacyKeychainCredentials =
-        process.platform === 'darwin' ? await readActiveClaudeKeychainCredentialsStrict() : null
-      const runtimeKeychainStillPresent =
-        currentScopedKeychainCredentials === this.lastWrittenCredentialsJson ||
-        currentLegacyKeychainCredentials === this.lastWrittenCredentialsJson
-      if (process.platform === 'darwin' && runtimeKeychainStillPresent) {
-        return 'none'
-      }
-      const snapshotPath = this.getSystemDefaultSnapshotPath()
-      rmSync(snapshotPath, { force: true })
-      this.lastWrittenCredentialsJson = null
-      return 'file-logout'
-    }
-    const currentCredentials = readFileSync(paths.credentialsPath, 'utf-8')
-    const currentScopedKeychainCredentials =
-      process.platform === 'darwin'
-        ? await readActiveClaudeKeychainCredentialsStrict(paths.configDir)
-        : null
-    const currentLegacyKeychainCredentials =
-      process.platform === 'darwin' ? await readActiveClaudeKeychainCredentialsStrict() : null
-    if (currentCredentials === this.lastWrittenCredentialsJson) {
-      const runtimeKeychainChanged =
-        currentScopedKeychainCredentials !== this.lastWrittenCredentialsJson ||
-        currentLegacyKeychainCredentials !== this.lastWrittenCredentialsJson
-      if (process.platform === 'darwin' && runtimeKeychainChanged) {
-        return 'keychain-change'
-      }
-      return 'none'
-    }
-    const snapshotPath = this.getSystemDefaultSnapshotPath()
-    rmSync(snapshotPath, { force: true })
-    this.lastWrittenCredentialsJson = null
-    return 'file-logout'
   }
 
   private readRuntimeOauthAccount(): unknown {

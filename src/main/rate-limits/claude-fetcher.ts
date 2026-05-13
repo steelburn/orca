@@ -107,8 +107,12 @@ async function readFromKeychain(configDir?: string): Promise<string | null> {
     return null
   }
 
-  const credentials = await readActiveClaudeKeychainCredentials(configDir)
-  return credentials ? parseOAuthTokenFromCredentialsJson(credentials) : null
+  try {
+    const credentials = await readActiveClaudeKeychainCredentials(configDir)
+    return credentials ? parseOAuthTokenFromCredentialsJson(credentials) : null
+  } catch {
+    return null
+  }
 }
 
 /**
