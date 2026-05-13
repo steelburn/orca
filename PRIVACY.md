@@ -24,7 +24,7 @@ Every event carries these common properties:
 - `session_id` — new UUID per app launch; does not persist.
 - `orca_channel` — `stable` or `rc`. Present only on official release builds; dev builds never transmit.
 
-The events we send (7 in total — 8 literal names, counting `telemetry_opted_in` / `telemetry_opted_out` as one matched pair):
+The events we send:
 
 ### Lifecycle
 
@@ -47,6 +47,17 @@ The events we send (7 in total — 8 literal names, counting `telemetry_opted_in
 ### Privacy controls
 
 - `telemetry_opted_in` / `telemetry_opted_out` — fires exactly once at the moment of the change. `via`: `first_launch_banner` / `first_launch_notice` / `settings`. Environment-variable and CI overrides do not fire these events — they disable transmission at runtime without changing your stored preference.
+
+### Feature discovery
+
+- `feature_chip_eligibility_step` — `step`: closed enum for the feature-chip trigger gate reached in this session. No prompt, workspace, repo, or branch content.
+- `feature_chip_eligible` — `flag_variant`: `enabled` / `control` / `network_error` / `flag_missing`.
+- `feature_chip_shown` / `feature_chip_clicked` / `feature_chip_dismissed` — `is_second_chance` boolean only.
+- `feature_wall_opened` — `surface`: `chip` / `help_tour`.
+- `feature_wall_closed` — `surface` plus `dwell_ms`.
+- `feature_wall_tile_focused` — `surface` plus `tile_id` (`tile-01` through `tile-07`).
+
+PostHog also records its standard feature-flag evaluation event when Orca resolves the `feature_wall_chip` experiment assignment. That event uses the same anonymous `install_id` and the flag key / variant; Orca does not attach user content to it.
 
 ## What we never send
 

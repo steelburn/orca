@@ -68,6 +68,13 @@ export function useIpcEvents(): void {
       })
     )
 
+    unsubs.push(
+      window.api.ui.onOpenFeatureTour(() => {
+        dispatchClearModifierHints()
+        useAppStore.getState().openModal('feature-wall', { surface: 'help_tour' })
+      })
+    )
+
     // Why: the View > Appearance menu toggles settings directly in main (so
     // checkbox state reflects the persisted value without a round-trip) and
     // broadcasts the change. Merge it into the store so the sidebar and

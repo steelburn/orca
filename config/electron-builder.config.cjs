@@ -2,6 +2,10 @@ const { chmodSync, existsSync, readdirSync } = require('node:fs')
 const { join } = require('node:path')
 
 const isMacRelease = process.env.ORCA_MAC_RELEASE === '1'
+const featureWallResources = {
+  from: 'resources/onboarding/feature-wall',
+  to: 'onboarding/feature-wall'
+}
 
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
@@ -42,7 +46,12 @@ module.exports = {
   afterPack: async (context) => {
     const resourcesDir =
       context.electronPlatformName === 'darwin'
-        ? join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`, 'Contents', 'Resources')
+        ? join(
+            context.appOutDir,
+            `${context.packager.appInfo.productFilename}.app`,
+            'Contents',
+            'Resources'
+          )
         : join(context.appOutDir, 'resources')
     if (!existsSync(resourcesDir)) {
       return
@@ -67,7 +76,8 @@ module.exports = {
       {
         from: 'node_modules/agent-browser/bin/agent-browser-win32-x64.exe',
         to: 'agent-browser-win32-x64.exe'
-      }
+      },
+      featureWallResources
     ]
   },
   nsis: {
@@ -115,7 +125,8 @@ module.exports = {
       {
         from: 'node_modules/agent-browser/bin/agent-browser-darwin-${arch}',
         to: 'agent-browser-darwin-${arch}'
-      }
+      },
+      featureWallResources
     ],
     target: [
       {
@@ -143,7 +154,8 @@ module.exports = {
       {
         from: 'node_modules/agent-browser/bin/agent-browser-linux-${arch}',
         to: 'agent-browser-linux-${arch}'
-      }
+      },
+      featureWallResources
     ],
     target: ['AppImage', 'deb'],
     maintainer: 'stablyai',

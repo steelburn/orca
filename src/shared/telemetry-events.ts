@@ -99,6 +99,40 @@ export type LaunchSource = z.infer<typeof launchSourceSchema>
 export const requestKindSchema = z.enum(['new', 'resume', 'followup'])
 export type RequestKind = z.infer<typeof requestKindSchema>
 
+export const featureWallSurfaceSchema = z.enum(['chip', 'help_tour'])
+export type FeatureWallSurfaceTelemetry = z.infer<typeof featureWallSurfaceSchema>
+
+export const featureWallTileIdSchema = z.enum([
+  'tile-01',
+  'tile-02',
+  'tile-03',
+  'tile-04',
+  'tile-05',
+  'tile-06',
+  'tile-07'
+])
+export type FeatureWallTileIdTelemetry = z.infer<typeof featureWallTileIdSchema>
+
+export const featureWallChipFlagVariantSchema = z.enum([
+  'enabled',
+  'control',
+  'network_error',
+  'flag_missing'
+])
+export type FeatureWallChipFlagVariantTelemetry = z.infer<typeof featureWallChipFlagVariantSchema>
+
+export const featureChipEligibilityStepSchema = z.enum([
+  'wizard_done',
+  'has_workspace',
+  'has_prompt',
+  'cooldown_passed',
+  'gated_clear',
+  'deferred_modal_open',
+  'deferred_textarea_focus',
+  'deferred_agent_streaming'
+])
+export type FeatureChipEligibilityStepTelemetry = z.infer<typeof featureChipEligibilityStepSchema>
+
 // `env_var` is deliberately absent — env-var and CI paths override consent at
 // runtime only (see consent.ts); they never mutate `optedIn` and therefore
 // never fire a `telemetry_opted_in/out` event. If a future path explicitly
@@ -185,6 +219,36 @@ const settingsChangedSchema = z
 const telemetryOptedInSchema = z.object({ via: optInViaSchema }).strict()
 const telemetryOptedOutSchema = z.object({ via: optInViaSchema }).strict()
 
+const featureChipEligibilityStepEventSchema = z
+  .object({
+    step: featureChipEligibilityStepSchema
+  })
+  .strict()
+const featureChipEligibleSchema = z
+  .object({
+    flag_variant: featureWallChipFlagVariantSchema
+  })
+  .strict()
+const featureChipInteractedSchema = z
+  .object({
+    is_second_chance: z.boolean()
+  })
+  .strict()
+
+const featureWallOpenedSchema = z.object({ surface: featureWallSurfaceSchema }).strict()
+const featureWallClosedSchema = z
+  .object({
+    surface: featureWallSurfaceSchema,
+    dwell_ms: z.number().int().min(0).max(86_400_000)
+  })
+  .strict()
+const featureWallTileFocusedSchema = z
+  .object({
+    surface: featureWallSurfaceSchema,
+    tile_id: featureWallTileIdSchema
+  })
+  .strict()
+
 // ── Event registry: the one record the validator consumes ───────────────
 //
 // The validator does `eventSchemas[name].safeParse(props)`. `EventMap` is
@@ -210,7 +274,17 @@ export const eventSchemas = {
   settings_changed: settingsChangedSchema,
 
   telemetry_opted_in: telemetryOptedInSchema,
-  telemetry_opted_out: telemetryOptedOutSchema
+  telemetry_opted_out: telemetryOptedOutSchema,
+
+  feature_chip_eligibility_step: featureChipEligibilityStepEventSchema,
+  feature_chip_eligible: featureChipEligibleSchema,
+  feature_chip_shown: featureChipInteractedSchema,
+  feature_chip_clicked: featureChipInteractedSchema,
+  feature_chip_dismissed: featureChipInteractedSchema,
+
+  feature_wall_opened: featureWallOpenedSchema,
+  feature_wall_closed: featureWallClosedSchema,
+  feature_wall_tile_focused: featureWallTileFocusedSchema
 } as const
 
 export type EventMap = { [N in keyof typeof eventSchemas]: z.infer<(typeof eventSchemas)[N]> }

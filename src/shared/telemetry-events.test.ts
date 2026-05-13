@@ -11,6 +11,10 @@ import {
   commonPropsSchema,
   errorClassSchema,
   eventSchemas,
+  featureChipEligibilityStepSchema,
+  featureWallChipFlagVariantSchema,
+  featureWallSurfaceSchema,
+  featureWallTileIdSchema,
   SETTINGS_CHANGED_WHITELIST,
   settingsChangedKeySchema
 } from './telemetry-events'
@@ -139,6 +143,60 @@ describe('settings_changed schema', () => {
   })
 })
 
+describe('feature wall schemas', () => {
+  it('accepts chip eligibility and interaction payloads', () => {
+    expect(
+      eventSchemas.feature_chip_eligibility_step.safeParse({ step: 'cooldown_passed' }).success
+    ).toBe(true)
+    expect(eventSchemas.feature_chip_eligible.safeParse({ flag_variant: 'enabled' }).success).toBe(
+      true
+    )
+    expect(eventSchemas.feature_chip_shown.safeParse({ is_second_chance: false }).success).toBe(
+      true
+    )
+    expect(eventSchemas.feature_chip_clicked.safeParse({ is_second_chance: true }).success).toBe(
+      true
+    )
+    expect(eventSchemas.feature_chip_dismissed.safeParse({ is_second_chance: true }).success).toBe(
+      true
+    )
+  })
+
+  it('rejects unknown chip flag variants', () => {
+    expect(
+      eventSchemas.feature_chip_eligible.safeParse({ flag_variant: 'variant-b' }).success
+    ).toBe(false)
+  })
+
+  it('accepts the Help-menu open and close payloads', () => {
+    expect(eventSchemas.feature_wall_opened.safeParse({ surface: 'help_tour' }).success).toBe(true)
+    expect(
+      eventSchemas.feature_wall_closed.safeParse({ surface: 'help_tour', dwell_ms: 1200 }).success
+    ).toBe(true)
+  })
+
+  it('rejects out-of-range dwell time', () => {
+    expect(
+      eventSchemas.feature_wall_closed.safeParse({ surface: 'help_tour', dwell_ms: -1 }).success
+    ).toBe(false)
+  })
+
+  it('accepts only known tile ids for tile focus telemetry', () => {
+    expect(
+      eventSchemas.feature_wall_tile_focused.safeParse({
+        surface: 'help_tour',
+        tile_id: 'tile-07'
+      }).success
+    ).toBe(true)
+    expect(
+      eventSchemas.feature_wall_tile_focused.safeParse({
+        surface: 'help_tour',
+        tile_id: 'tile-99'
+      }).success
+    ).toBe(false)
+  })
+})
+
 describe('commonPropsSchema', () => {
   it('round-trips a realistic payload', () => {
     const parsed = commonPropsSchema.safeParse({
@@ -212,6 +270,13 @@ describe('exported enum schemas', () => {
     for (const key of SETTINGS_CHANGED_WHITELIST) {
       expect(settingsChangedKeySchema.safeParse(key).success).toBe(true)
     }
+  })
+
+  it('feature wall enum schemas accept known values', () => {
+    expect(featureWallSurfaceSchema.safeParse('help_tour').success).toBe(true)
+    expect(featureWallTileIdSchema.safeParse('tile-01').success).toBe(true)
+    expect(featureWallChipFlagVariantSchema.safeParse('network_error').success).toBe(true)
+    expect(featureChipEligibilityStepSchema.safeParse('deferred_modal_open').success).toBe(true)
   })
 
   it('agentErrorNameSchema membership matches AGENT_ERROR_NAME_WHITELIST', () => {

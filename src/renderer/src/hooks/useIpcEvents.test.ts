@@ -148,6 +148,7 @@ describe('useIpcEvents updater integration', () => {
         worktrees: { onChanged: () => () => {} },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -338,6 +339,7 @@ describe('useIpcEvents updater integration', () => {
         worktrees: { onChanged: () => () => {} },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -521,6 +523,7 @@ describe('useIpcEvents updater integration', () => {
         worktrees: { onChanged: () => () => {} },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -717,6 +720,7 @@ describe('useIpcEvents browser tab close routing', () => {
         worktrees: { onChanged: () => () => {} },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -902,6 +906,7 @@ describe('useIpcEvents browser tab close routing', () => {
         worktrees: { onChanged: () => () => {} },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -1082,6 +1087,7 @@ describe('useIpcEvents browser tab close routing', () => {
         worktrees: { onChanged: () => () => {} },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -1274,6 +1280,7 @@ describe('useIpcEvents shortcut hint clearing', () => {
         worktrees: { onChanged: () => () => {} },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: (listener: () => void) => {
             toggleLeftSidebarRef.current = listener
             return () => {}
@@ -1467,6 +1474,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
         worktrees: { onChanged: () => () => {} },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},

@@ -68,6 +68,9 @@ jobs:
             exit 1
           fi
 
+      - name: Check feature wall asset budget
+        run: pnpm check:feature-wall-assets
+
       - name: Typecheck
         run: pnpm typecheck
 

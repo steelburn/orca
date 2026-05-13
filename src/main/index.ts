@@ -453,6 +453,9 @@ app.whenReady().then(async () => {
     onOpenSettings: () => {
       mainWindow?.webContents.send('ui:openSettings')
     },
+    onOpenFeatureTour: () => {
+      mainWindow?.webContents.send('ui:openFeatureTour')
+    },
     onZoomIn: () => {
       mainWindow?.webContents.send('terminal:zoom', 'in')
     },

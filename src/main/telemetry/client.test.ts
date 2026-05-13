@@ -36,6 +36,7 @@ import {
 // force review against the no-identify invariant.
 type MockPostHog = {
   capture: ReturnType<typeof vi.fn>
+  getFeatureFlagResult: ReturnType<typeof vi.fn>
   optIn: ReturnType<typeof vi.fn>
   optOut: ReturnType<typeof vi.fn>
   shutdown: ReturnType<typeof vi.fn>
@@ -44,6 +45,7 @@ type MockPostHog = {
 function makeMockPostHog(): MockPostHog {
   return {
     capture: vi.fn(),
+    getFeatureFlagResult: vi.fn(),
     optIn: vi.fn(),
     optOut: vi.fn(),
     shutdown: vi.fn(async () => {})
@@ -59,7 +61,10 @@ function makeFakeStore(settings: GlobalSettings): Store {
     getSettings: vi.fn(() => settings),
     updateSettings: vi.fn((updates: Partial<GlobalSettings>) => {
       if (updates.telemetry) {
-        settings.telemetry = { ...settings.telemetry, ...updates.telemetry } as typeof settings.telemetry
+        settings.telemetry = {
+          ...settings.telemetry,
+          ...updates.telemetry
+        } as typeof settings.telemetry
       }
       return settings
     })

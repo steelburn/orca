@@ -22,6 +22,7 @@ import { setTrustedBrowserRendererWebContentsId, setAgentBrowserBridgeRef } from
 import { registerSessionHandlers } from './session'
 import { registerSettingsHandlers } from './settings'
 import { registerTelemetryHandlers } from './telemetry'
+import { registerFeatureFlagHandlers } from './feature-flags'
 import { registerBrowserHandlers } from './browser'
 import { browserSessionRegistry } from '../browser/browser-session-registry'
 import { registerShellHandlers } from './shell'
@@ -84,6 +85,7 @@ export function registerCoreHandlers(
   registerDeveloperPermissionHandlers()
   registerSettingsHandlers(store)
   registerTelemetryHandlers()
+  registerFeatureFlagHandlers()
   registerBrowserHandlers()
   // Why: applyPendingCookieImport MUST run before restorePersistedUserAgent
   // because the latter calls session.fromPartition() which initializes

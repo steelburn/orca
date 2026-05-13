@@ -27,7 +27,10 @@ import { registerTelemetryHandlers } from './telemetry'
 function captureHandlers(): void {
   handlers.clear()
   for (const call of handleMock.mock.calls) {
-    const [channel, handler] = call as [string, typeof handlers extends Map<string, infer V> ? V : never]
+    const [channel, handler] = call as [
+      string,
+      typeof handlers extends Map<string, infer V> ? V : never
+    ]
     handlers.set(channel, handler)
   }
 }
@@ -46,7 +49,7 @@ describe('telemetry IPC handlers', () => {
     vi.restoreAllMocks()
   })
 
-  it('registers both channels', () => {
+  it('registers the telemetry channels', () => {
     expect(handlers.has('telemetry:track')).toBe(true)
     expect(handlers.has('telemetry:setOptIn')).toBe(true)
   })

@@ -17,8 +17,9 @@
 //                             boolean. Env-var / CI / opt-out all funnel
 //                             through here.
 //   4. validator            — schema-level safeParse. Fail-closed.
-//   5. posthog.capture      — the only place this module calls into the
-//                             vendor SDK.
+//   5. posthog.capture      — the only event-emission call into the vendor
+//                             SDK. Feature flag reads use getFeatureFlagResult
+//                             separately and return control on failure.
 //
 // `$process_person_profile: false` is attached on every capture because
 // posthog-node has no init-time equivalent of posthog-js's
@@ -30,18 +31,17 @@ import { randomUUID } from 'node:crypto'
 import { arch as osArch, platform as osPlatform, release as osRelease } from 'node:os'
 import { app } from 'electron'
 import { PostHog } from 'posthog-node'
+import {
+  featureFlagFallback,
+  isFeatureWallChipVariant,
+  type FeatureFlagKey,
+  type FeatureFlagResolution
+} from '../../shared/feature-flags'
 import type { CommonProps, EventName, EventProps } from '../../shared/telemetry-events'
 import type { Store } from '../persistence'
 import { consumeBurstToken, resetBurstCapsForSession } from './burst-cap'
 import { resolveConsent } from './consent'
 import { commonPropsSchema, validate } from './validator'
-
-// Compile-time feature flag. PR 2 ships with this `false` — the SDK is wired
-// but no event transmits. PR 3 flips it to `true` once the PostHog project
-// is live and dashboards are verified. Independent of the build-identity
-// gate below: both must be satisfied to transmit, so flipping the flag
-// alone still leaves contributor builds silent.
-const TELEMETRY_ENABLED = false
 
 // Eligible-to-transmit only if the CI release pipeline injected BOTH the
 // build-identity constant and a write key. One without the other is treated
@@ -78,6 +78,7 @@ let sessionId: string | null = null
 let commonProps: CommonProps | null = null
 let shuttingDown = false
 let storeRef: Store | null = null
+const featureFlagCache = new Map<FeatureFlagKey, Promise<FeatureFlagResolution>>()
 
 // Test-only override for the transport gate. Set by `_enableTransportForTests`
 // so the client.test.ts suite can exercise the full pipeline (burst cap,
@@ -86,11 +87,7 @@ let storeRef: Store | null = null
 // be bounded by `resolveConsent` + the validator.
 let testTransportEnabled = false
 
-function buildCommonProps(
-  installId: string,
-  sid: string,
-  channel: 'stable' | 'rc'
-): CommonProps {
+function buildCommonProps(installId: string, sid: string, channel: 'stable' | 'rc'): CommonProps {
   // `.max(64)` on every free-form string field in `commonPropsSchema` is the
   // upper bound; node's platform / arch / release strings are always well
   // under that in practice. We do not truncate here because the validator's
@@ -113,9 +110,10 @@ export function initTelemetry(store: Store): void {
   // disk on a contributor laptop, not just on official builds.
   storeRef = store
   resetBurstCapsForSession()
+  featureFlagCache.clear()
   shuttingDown = false
 
-  if (!TELEMETRY_ENABLED || !IS_OFFICIAL_BUILD) {
+  if (!IS_OFFICIAL_BUILD) {
     return
   }
 
@@ -184,11 +182,9 @@ export function initTelemetry(store: Store): void {
 }
 
 export function track<N extends EventName>(name: N, props: EventProps<N>): void {
-  // Console mirror: always in non-official builds (so the whole team —
-  // contributors included — sees exactly what would transmit) and also in
-  // official builds when `TELEMETRY_ENABLED` is off (PR 2 verification).
-  // These are the only two paths that short-circuit before the pipeline.
-  if (!testTransportEnabled && (!IS_OFFICIAL_BUILD || !TELEMETRY_ENABLED)) {
+  // Console mirror in non-official builds so contributors see exactly what
+  // would transmit without needing PostHog credentials or release secrets.
+  if (!testTransportEnabled && !IS_OFFICIAL_BUILD) {
     console.debug('[telemetry]', name, props)
     return
   }
@@ -243,6 +239,57 @@ export function track<N extends EventName>(name: N, props: EventProps<N>): void 
       $process_person_profile: false
     }
   })
+}
+
+async function resolveFeatureFlag(key: FeatureFlagKey): Promise<FeatureFlagResolution> {
+  // Why: `feature_wall_chip` is the PostHog A/B assignment created in project
+  // 406068 via Orca CLI/browser automation. Only main talks to PostHog; the
+  // renderer receives the resolved variant over a typed IPC surface.
+  if (!testTransportEnabled && !IS_OFFICIAL_BUILD) {
+    return featureFlagFallback(key, 'transport_unavailable')
+  }
+  if (!posthog || !commonProps || !storeRef) {
+    return featureFlagFallback(key, 'transport_unavailable')
+  }
+
+  const consent = resolveConsent(storeRef.getSettings())
+  if (consent.effective !== 'enabled') {
+    return featureFlagFallback(key, 'telemetry_disabled')
+  }
+
+  try {
+    const result = await posthog.getFeatureFlagResult(key, commonProps.install_id, {
+      sendFeatureFlagEvents: true
+    })
+    if (!result) {
+      return featureFlagFallback(key, 'flag_missing')
+    }
+    if (!result.enabled) {
+      return { key, variant: 'control', status: 'resolved' }
+    }
+    if (isFeatureWallChipVariant(result.variant)) {
+      return { key, variant: result.variant, status: 'resolved' }
+    }
+    return featureFlagFallback(key, 'invalid_variant')
+  } catch (err) {
+    console.warn('[telemetry] feature flag resolution failed:', err)
+    return featureFlagFallback(key, 'network_error')
+  }
+}
+
+export function getFeatureFlag(key: FeatureFlagKey): Promise<FeatureFlagResolution> {
+  if (!storeRef || resolveConsent(storeRef.getSettings()).effective !== 'enabled') {
+    return Promise.resolve(featureFlagFallback(key, 'telemetry_disabled'))
+  }
+
+  let cached = featureFlagCache.get(key)
+  if (!cached) {
+    // Why: a PostHog variant is an experiment assignment, not live config.
+    // Cache for the process lifetime so UI cannot flicker if the flag changes.
+    cached = resolveFeatureFlag(key)
+    featureFlagCache.set(key, cached)
+  }
+  return cached
 }
 
 export function setOptIn(
@@ -347,4 +394,8 @@ export function _getSessionIdForTests(): string | null {
 
 export function _enableTransportForTests(enabled: boolean): void {
   testTransportEnabled = enabled
+}
+
+export function _resetFeatureFlagCacheForTests(): void {
+  featureFlagCache.clear()
 }

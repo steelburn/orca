@@ -1,4 +1,6 @@
 import { execFile } from 'node:child_process'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { app, ipcMain } from 'electron'
 import { isPwshAvailable } from '../pwsh'
@@ -27,6 +29,12 @@ export function setAppRuntimeFlags(flags: AppRuntimeFlags): void {
 
 export function registerAppHandlers(): void {
   ipcMain.handle('app:getRuntimeFlags', (): AppRuntimeFlags => runtimeFlags)
+  ipcMain.handle('app:getFeatureWallAssetBaseUrl', (): string => {
+    const assetDir = app.isPackaged
+      ? join(process.resourcesPath, 'onboarding', 'feature-wall')
+      : join(app.getAppPath(), 'resources', 'onboarding', 'feature-wall')
+    return `${pathToFileURL(assetDir).toString()}/`
+  })
 
   ipcMain.handle('wsl:isAvailable', (): boolean => isWslAvailable())
   ipcMain.handle('pwsh:isAvailable', (): boolean => isPwshAvailable())

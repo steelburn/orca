@@ -118,6 +118,7 @@ import type {
   CodexUsageSessionRow,
   CodexUsageSummary
 } from '../shared/codex-usage-types'
+import type { FeatureFlagKey, FeatureFlagResolution } from '../shared/feature-flags'
 
 export type BrowserApi = {
   registerGuest: (args: {
@@ -316,6 +317,9 @@ export type AppApi = {
    *  The renderer uses this to show a "restart required" banner when the user
    *  toggles a setting that only applies across a full relaunch. */
   getRuntimeFlags: () => Promise<AppRuntimeFlags>
+  /** Returns a file:// base URL for the feature-wall assets copied through
+   *  electron-builder extraResources. The renderer appends tile filenames. */
+  getFeatureWallAssetBaseUrl: () => Promise<string>
   /** Relaunches the app via Electron's app.relaunch() + app.exit(0). Used
    *  by the "Restart now" button on the Experimental settings pane. */
   relaunch: () => Promise<void>
@@ -576,6 +580,12 @@ export type PreloadApi = {
   /** Flip the persisted opt-in preference. Subject to a per-session
    *  consent-mutation rate limit on the main side (≤5/session). */
   telemetrySetOptIn: (optedIn: boolean) => Promise<void>
+  featureFlags: {
+    /** Resolve a known PostHog feature flag in main. Unknown keys are
+     *  rejected at the IPC handler; renderer code should use the typed
+     *  wrapper in `src/renderer/src/lib/feature-flags.ts`. */
+    get: (key: FeatureFlagKey) => Promise<FeatureFlagResolution | null>
+  }
   settings: {
     get: () => Promise<GlobalSettings>
     set: (args: Partial<GlobalSettings>) => Promise<GlobalSettings>
@@ -827,6 +837,7 @@ export type PreloadApi = {
     get: () => Promise<PersistedUIState>
     set: (args: Partial<PersistedUIState>) => Promise<void>
     onOpenSettings: (callback: () => void) => () => void
+    onOpenFeatureTour: (callback: () => void) => () => void
     onToggleLeftSidebar: (callback: () => void) => () => void
     onToggleRightSidebar: (callback: () => void) => () => void
     onToggleWorktreePalette: (callback: () => void) => () => void

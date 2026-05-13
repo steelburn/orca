@@ -52,6 +52,7 @@ const Settings = lazy(() => import('./components/settings/Settings'))
 const QuickOpen = lazy(() => import('./components/QuickOpen'))
 const WorktreeJumpPalette = lazy(() => import('./components/WorktreeJumpPalette'))
 const NewWorkspaceComposerModal = lazy(() => import('./components/NewWorkspaceComposerModal'))
+const FeatureWallModal = lazy(() => import('./components/feature-wall/FeatureWallModal'))
 // Why: lazy-loaded so the WebP asset + overlay module aren't fetched unless
 // the user opts into the experimental flag.
 const SidekickOverlay = lazy(() => import('./components/sidekick/SidekickOverlay'))
@@ -716,7 +717,8 @@ function App(): React.JSX.Element {
     if (
       activeModal !== 'quick-open' &&
       activeModal !== 'worktree-palette' &&
-      activeModal !== 'new-workspace-composer'
+      activeModal !== 'new-workspace-composer' &&
+      activeModal !== 'feature-wall'
     ) {
       return
     }
@@ -1090,6 +1092,7 @@ function App(): React.JSX.Element {
       <Suspense fallback={null}>
         {mountedLazyModalIds.has('quick-open') ? <QuickOpen /> : null}
         {mountedLazyModalIds.has('worktree-palette') ? <WorktreeJumpPalette /> : null}
+        {mountedLazyModalIds.has('feature-wall') ? <FeatureWallModal /> : null}
       </Suspense>
       {/* Why: mount SidekickOverlay only when the experimental flag is on AND
           the user hasn't hit "Hide sidekick" in the status-bar menu. Both

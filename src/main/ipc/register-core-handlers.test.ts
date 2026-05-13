@@ -13,6 +13,7 @@ const {
   registerDeveloperPermissionHandlersMock,
   registerSettingsHandlersMock,
   registerTelemetryHandlersMock,
+  registerFeatureFlagHandlersMock,
   registerShellHandlersMock,
   registerSidekickHandlersMock,
   registerSessionHandlersMock,
@@ -45,6 +46,7 @@ const {
   registerDeveloperPermissionHandlersMock: vi.fn(),
   registerSettingsHandlersMock: vi.fn(),
   registerTelemetryHandlersMock: vi.fn(),
+  registerFeatureFlagHandlersMock: vi.fn(),
   registerShellHandlersMock: vi.fn(),
   registerSidekickHandlersMock: vi.fn(),
   registerSessionHandlersMock: vi.fn(),
@@ -116,6 +118,10 @@ vi.mock('./settings', () => ({
 
 vi.mock('./telemetry', () => ({
   registerTelemetryHandlers: registerTelemetryHandlersMock
+}))
+
+vi.mock('./feature-flags', () => ({
+  registerFeatureFlagHandlers: registerFeatureFlagHandlersMock
 }))
 
 vi.mock('./shell', () => ({
@@ -197,6 +203,7 @@ describe('registerCoreHandlers', () => {
     registerDeveloperPermissionHandlersMock.mockReset()
     registerSettingsHandlersMock.mockReset()
     registerTelemetryHandlersMock.mockReset()
+    registerFeatureFlagHandlersMock.mockReset()
     registerShellHandlersMock.mockReset()
     registerSidekickHandlersMock.mockReset()
     registerSessionHandlersMock.mockReset()
@@ -254,6 +261,7 @@ describe('registerCoreHandlers', () => {
     expect(registerNotificationHandlersMock).toHaveBeenCalledWith(store)
     expect(registerDeveloperPermissionHandlersMock).toHaveBeenCalled()
     expect(registerSettingsHandlersMock).toHaveBeenCalledWith(store)
+    expect(registerFeatureFlagHandlersMock).toHaveBeenCalled()
     expect(registerSessionHandlersMock).toHaveBeenCalledWith(store)
     expect(registerUIHandlersMock).toHaveBeenCalledWith(store)
     expect(registerFilesystemHandlersMock).toHaveBeenCalledWith(store)
