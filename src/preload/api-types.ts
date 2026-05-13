@@ -1178,15 +1178,6 @@ export type PreloadApi = {
     onMaximizeChanged: (callback: (isMaximized: boolean) => void) => () => void
     requestClose: () => void
     popupMenu: () => void
-    floatingTerminal: {
-      hide: () => void
-      toggleMaximized: () => void
-      isMaximized: () => Promise<boolean>
-      onMaximizeChanged: (callback: (isMaximized: boolean) => void) => () => void
-      togglePinned: () => void
-      isPinned: () => Promise<boolean>
-      onPinnedChanged: (callback: (pinned: boolean) => void) => () => void
-    }
     onWindowCloseRequested: (callback: (data: { isQuitting: boolean }) => void) => () => void
     confirmWindowClose: () => void
   }

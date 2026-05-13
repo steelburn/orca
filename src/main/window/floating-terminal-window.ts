@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, nativeTheme } from 'electron'
+import { app, BrowserWindow, nativeTheme } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
 import icon from '../../../resources/icon.png?asset'
@@ -11,55 +11,6 @@ const FLOATING_TERMINAL_MIN_HEIGHT = 280
 
 let floatingTerminalWindow: BrowserWindow | null = null
 let appQuitting = false
-
-function isFloatingTerminalSender(
-  event: Electron.IpcMainEvent | Electron.IpcMainInvokeEvent
-): boolean {
-  return floatingTerminalWindow?.webContents.id === event.sender.id
-}
-
-function sendWindowState(window: BrowserWindow): void {
-  if (window.isDestroyed()) {
-    return
-  }
-  window.webContents.send('floating-terminal-window:maximize-changed', window.isMaximized())
-  window.webContents.send('floating-terminal-window:pinned-changed', window.isAlwaysOnTop())
-}
-
-ipcMain.handle('floating-terminal-window:isMaximized', (event): boolean => {
-  return isFloatingTerminalSender(event) && floatingTerminalWindow?.isMaximized() === true
-})
-
-ipcMain.handle('floating-terminal-window:isPinned', (event): boolean => {
-  return isFloatingTerminalSender(event) && floatingTerminalWindow?.isAlwaysOnTop() === true
-})
-
-ipcMain.on('floating-terminal-window:hide', (event) => {
-  if (isFloatingTerminalSender(event)) {
-    floatingTerminalWindow?.hide()
-  }
-})
-
-ipcMain.on('floating-terminal-window:toggleMaximized', (event) => {
-  const window = floatingTerminalWindow
-  if (!window || window.isDestroyed() || !isFloatingTerminalSender(event)) {
-    return
-  }
-  if (window.isMaximized()) {
-    window.unmaximize()
-  } else {
-    window.maximize()
-  }
-})
-
-ipcMain.on('floating-terminal-window:togglePinned', (event) => {
-  const window = floatingTerminalWindow
-  if (!window || window.isDestroyed() || !isFloatingTerminalSender(event)) {
-    return
-  }
-  window.setAlwaysOnTop(!window.isAlwaysOnTop(), 'floating')
-  sendWindowState(window)
-})
 
 app.on('before-quit', () => {
   appQuitting = true
@@ -92,7 +43,6 @@ export function showFloatingTerminalWindow(): void {
     minWidth: FLOATING_TERMINAL_MIN_WIDTH,
     minHeight: FLOATING_TERMINAL_MIN_HEIGHT,
     title: 'Floating Terminal',
-    frame: false,
     show: false,
     autoHideMenuBar: true,
     backgroundColor: nativeTheme.shouldUseDarkColors ? '#0a0a0a' : '#ffffff',
@@ -105,7 +55,6 @@ export function showFloatingTerminalWindow(): void {
   })
 
   floatingTerminalWindow = window
-  window.setAlwaysOnTop(true, 'floating')
   window.webContents.setBackgroundThrottling(false)
   window.once('ready-to-show', () => {
     if (!window.isDestroyed()) {
@@ -126,8 +75,6 @@ export function showFloatingTerminalWindow(): void {
       floatingTerminalWindow = null
     }
   })
-  window.on('maximize', () => sendWindowState(window))
-  window.on('unmaximize', () => sendWindowState(window))
   window.webContents.on('before-input-event', (event, input) => {
     if (input.type !== 'keyDown') {
       return
