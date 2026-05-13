@@ -10,7 +10,7 @@ import { writeFileAtomically } from '../codex-accounts/fs-utils'
 import type { ClaudeEnvPatch } from './environment'
 import { ClaudeRuntimePathResolver } from './runtime-paths'
 import {
-  deleteActiveClaudeKeychainCredentials,
+  deleteActiveClaudeKeychainCredentialsStrict,
   readActiveClaudeKeychainCredentials,
   readManagedClaudeKeychainCredentials,
   writeActiveClaudeKeychainCredentials,
@@ -18,6 +18,7 @@ import {
 } from './keychain'
 
 export type ClaudeRuntimeAuthPreparation = {
+  configDir: string
   envPatch: ClaudeEnvPatch
   stripAuthEnv: boolean
   provenance: string
@@ -289,6 +290,7 @@ export class ClaudeRuntimeAuthService {
     const paths = this.pathResolver.getRuntimePaths()
     const activeAccountId = settings.activeClaudeManagedAccountId
     return {
+      configDir: paths.configDir,
       envPatch: paths.envPatch,
       stripAuthEnv: Boolean(activeAccountId),
       provenance: activeAccountId ? `managed:${activeAccountId}` : 'system'
@@ -526,10 +528,11 @@ export class ClaudeRuntimeAuthService {
     }
 
     const snapshotPath = this.getSystemDefaultSnapshotPath()
+    const paths = this.pathResolver.getRuntimePaths()
     if (!existsSync(snapshotPath)) {
-      rmSync(this.pathResolver.getRuntimePaths().credentialsPath, { force: true })
+      rmSync(paths.credentialsPath, { force: true })
       if (process.platform === 'darwin') {
-        await deleteActiveClaudeKeychainCredentials(this.pathResolver.getRuntimePaths().configDir)
+        await deleteActiveClaudeKeychainCredentialsStrict(paths.configDir)
       }
       this.lastWrittenCredentialsJson = null
       return
@@ -544,11 +547,8 @@ export class ClaudeRuntimeAuthService {
     if (process.platform === 'darwin') {
       if (externalState !== 'keychain-change') {
         await (snapshot.keychainCredentialsJson !== null
-          ? writeActiveClaudeKeychainCredentials(
-              snapshot.keychainCredentialsJson,
-              this.pathResolver.getRuntimePaths().configDir
-            )
-          : deleteActiveClaudeKeychainCredentials(this.pathResolver.getRuntimePaths().configDir))
+          ? writeActiveClaudeKeychainCredentials(snapshot.keychainCredentialsJson, paths.configDir)
+          : deleteActiveClaudeKeychainCredentialsStrict(paths.configDir))
       }
     }
   }

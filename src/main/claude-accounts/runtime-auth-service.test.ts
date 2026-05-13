@@ -44,6 +44,9 @@ vi.mock('./keychain', () => ({
   deleteActiveClaudeKeychainCredentials: vi.fn(async () => {
     testState.activeKeychainCredentials = null
   }),
+  deleteActiveClaudeKeychainCredentialsStrict: vi.fn(async () => {
+    testState.activeKeychainCredentials = null
+  }),
   readManagedClaudeKeychainCredentials: vi.fn(
     async (accountId: string) => testState.managedKeychainCredentials.get(accountId) ?? null
   ),
@@ -210,6 +213,10 @@ describe('ClaudeRuntimeAuthService', () => {
 
     expect(existsSync(runtimeCredentialsPath)).toBe(false)
     if (process.platform === 'darwin') {
+      const { deleteActiveClaudeKeychainCredentialsStrict } = await import('./keychain')
+      expect(deleteActiveClaudeKeychainCredentialsStrict).toHaveBeenCalledWith(
+        join(testState.fakeHomeDir, '.claude')
+      )
       expect(testState.activeKeychainCredentials).toBeNull()
     }
   })
@@ -1013,6 +1020,7 @@ describe('ClaudeRuntimeAuthService', () => {
     const preparation = await service.prepareForClaudeLaunch()
 
     expect(store.updateSettings).toHaveBeenCalledWith({ activeClaudeManagedAccountId: null })
+    expect(preparation.configDir).toBe(join(testState.fakeHomeDir, '.claude'))
     expect(preparation.stripAuthEnv).toBe(false)
     expect(preparation.provenance).toBe('system')
   })

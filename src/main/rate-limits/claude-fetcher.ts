@@ -256,9 +256,7 @@ export async function fetchClaudeRateLimits(options?: {
   authPreparation?: ClaudeRuntimeAuthPreparation
 }): Promise<ProviderRateLimits> {
   // Path A: try OAuth API if we have a genuine OAuth token
-  const oauthToken = await readOAuthCredentials(
-    options?.authPreparation?.envPatch.CLAUDE_CONFIG_DIR
-  )
+  const oauthToken = await readOAuthCredentials(options?.authPreparation?.configDir)
   if (oauthToken) {
     try {
       return await fetchViaOAuth(oauthToken)
