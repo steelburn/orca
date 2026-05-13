@@ -103,4 +103,13 @@ describe('getPRChecks', () => {
       }
     ])
   })
+
+  it('throws when both check-runs and gh pr checks fail', async () => {
+    getOwnerRepoMock.mockResolvedValueOnce({ owner: 'acme', repo: 'widgets' })
+    ghExecFileAsyncMock
+      .mockRejectedValueOnce(new Error('gh: No commit found for SHA: stale-head (HTTP 422)'))
+      .mockRejectedValueOnce(new Error('rate limited'))
+
+    await expect(getPRChecks('/repo-root', 42, 'stale-head')).rejects.toThrow('rate limited')
+  })
 })
