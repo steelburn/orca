@@ -175,12 +175,18 @@ export class ClaudeAccountService {
         ? null
         : settings.activeClaudeManagedAccountId
 
-    this.store.updateSettings({
-      claudeManagedAccounts: nextAccounts,
-      activeClaudeManagedAccountId: nextActiveId
-    })
     try {
-      await this.syncRuntimeAuthWithLivePtyGate()
+      if (settings.activeClaudeManagedAccountId === accountId) {
+        this.store.updateSettings({ activeClaudeManagedAccountId: null })
+        await this.syncRuntimeAuthWithLivePtyGate()
+        this.store.updateSettings({ claudeManagedAccounts: nextAccounts })
+      } else {
+        this.store.updateSettings({
+          claudeManagedAccounts: nextAccounts,
+          activeClaudeManagedAccountId: nextActiveId
+        })
+        await this.syncRuntimeAuthWithLivePtyGate()
+      }
       await this.safeRemoveManagedAuth(accountId, account.managedAuthPath)
       this.rateLimits.evictInactiveClaudeCache(accountId)
       await this.rateLimits.refreshForClaudeAccountChange(
@@ -279,6 +285,9 @@ export class ClaudeAccountService {
   private async runClaudeLoginAndCapture(): Promise<CapturedClaudeAuth> {
     const tempConfigDir = mkdtempSync(join(tmpdir(), 'orca-claude-login-'))
     const previousLegacyKeychain = await readActiveClaudeKeychainCredentials()
+    let captured: CapturedClaudeAuth | null = null
+    let captureError: unknown = null
+    let cleanupError: unknown = null
     try {
       await this.runClaudeCommand(['auth', 'login', '--claudeai'], tempConfigDir, LOGIN_TIMEOUT_MS)
       const status = await this.runClaudeCommand(
@@ -287,7 +296,9 @@ export class ClaudeAccountService {
         STATUS_TIMEOUT_MS,
         { allowFailure: true }
       )
-      return await this.captureAuthFromConfigDir(tempConfigDir, status, previousLegacyKeychain)
+      captured = await this.captureAuthFromConfigDir(tempConfigDir, status, previousLegacyKeychain)
+    } catch (error) {
+      captureError = error
     } finally {
       if (process.platform === 'darwin') {
         try {
@@ -296,15 +307,26 @@ export class ClaudeAccountService {
           console.warn('[claude-accounts] Failed to clean temporary Claude Keychain item:', error)
         }
       }
-      if (process.platform === 'darwin' && previousLegacyKeychain) {
-        // Why: older Claude versions ignored CLAUDE_CONFIG_DIR and wrote the
-        // legacy active Keychain item. Preserve that external CLI state.
-        await writeActiveClaudeKeychainCredentials(previousLegacyKeychain)
-      } else if (process.platform === 'darwin') {
-        await deleteActiveClaudeKeychainCredentialsStrict()
+      if (process.platform === 'darwin') {
+        try {
+          // Why: older Claude versions ignored CLAUDE_CONFIG_DIR and wrote the
+          // legacy active Keychain item. Preserve that external CLI state.
+          await (previousLegacyKeychain
+            ? writeActiveClaudeKeychainCredentials(previousLegacyKeychain)
+            : deleteActiveClaudeKeychainCredentialsStrict())
+        } catch (error) {
+          cleanupError = error
+        }
       }
       rmSync(tempConfigDir, { recursive: true, force: true })
     }
+    if (captureError) {
+      throw captureError
+    }
+    if (cleanupError) {
+      throw cleanupError
+    }
+    return captured!
   }
 
   private async captureAuthFromConfigDir(
@@ -331,7 +353,9 @@ export class ClaudeAccountService {
         return scopedCredentialsJson
       }
       const legacyCredentialsJson = await readActiveClaudeKeychainCredentialsStrict()
-      return legacyCredentialsJson === previousLegacyKeychain ? null : legacyCredentialsJson
+      if (legacyCredentialsJson && legacyCredentialsJson !== previousLegacyKeychain) {
+        return legacyCredentialsJson
+      }
     }
     const credentialsPath = join(configDir, '.credentials.json')
     return existsSync(credentialsPath) ? readFileSync(credentialsPath, 'utf-8') : null

@@ -157,10 +157,14 @@ export class ClaudeRuntimeAuthService {
         this.store.updateSettings({ activeClaudeManagedAccountId: null })
       }
       if (this.lastSyncedAccountId !== null) {
-        await this.restoreSystemDefaultSnapshot(
-          previousManagedCredentialsJson,
-          previousManagedOauthAccount
-        )
+        if (previousAccount) {
+          await this.restoreSystemDefaultSnapshot(
+            previousManagedCredentialsJson,
+            previousManagedOauthAccount
+          )
+        } else {
+          this.clearLastWrittenRuntimeState()
+        }
         this.lastSyncedAccountId = null
       }
       return
@@ -173,9 +177,9 @@ export class ClaudeRuntimeAuthService {
       )
       this.store.updateSettings({ activeClaudeManagedAccountId: null })
       if (this.lastSyncedAccountId !== null) {
-        await this.restoreSystemDefaultSnapshot(
-          previousManagedCredentialsJson,
-          previousManagedOauthAccount
+        await this.restoreSystemDefaultSnapshotForMissingManagedCredentials(
+          activeAccount,
+          this.readManagedOauthAccount(activeAccount)
         )
         this.lastSyncedAccountId = null
       }
@@ -187,7 +191,10 @@ export class ClaudeRuntimeAuthService {
       const runtimeCredentialsJson = existsSync(paths.credentialsPath)
         ? readFileSync(paths.credentialsPath, 'utf-8')
         : null
-      await this.captureSystemDefaultSnapshot({ force: runtimeCredentialsJson !== credentialsJson })
+      await this.captureSystemDefaultSnapshotForManagedEntry(
+        runtimeCredentialsJson,
+        credentialsJson
+      )
     }
 
     // Why: Claude CLI refreshes expired OAuth tokens and writes them back to
@@ -215,7 +222,15 @@ export class ClaudeRuntimeAuthService {
     if (process.platform === 'darwin') {
       // Why: Claude Code 2.1+ reads the scoped service, while older builds read
       // the legacy unsuffixed service. Runtime switching must satisfy both.
-      await writeActiveClaudeKeychainCredentialsForRuntime(credentialsJson, paths.configDir)
+      try {
+        await writeActiveClaudeKeychainCredentialsForRuntime(credentialsJson, paths.configDir)
+      } catch (error) {
+        await this.restoreSystemDefaultSnapshot(
+          credentialsJson,
+          this.readManagedOauthAccount(activeAccount)
+        )
+        throw error
+      }
     }
     const managedOauthAccount = this.readManagedOauthAccount(activeAccount)
     this.writeRuntimeOauthAccount(managedOauthAccount)
@@ -242,33 +257,53 @@ export class ClaudeRuntimeAuthService {
     options: { updateLastWrittenCredentialsJson: boolean }
   ): Promise<ClaudeReadBackResult> {
     try {
-      const runtimeContents = await this.readRuntimeCredentialsForReadBack(baselineCredentialsJson)
-      if (!runtimeContents) {
+      const candidates =
+        await this.readRuntimeCredentialCandidatesForReadBack(baselineCredentialsJson)
+      if (candidates.length === 0) {
         return { status: 'unchanged' }
       }
-      if (
-        this.lastWrittenCredentialsJson !== null &&
-        runtimeContents === this.lastWrittenCredentialsJson
-      ) {
+      const changedCandidates =
+        this.lastWrittenCredentialsJson === null
+          ? candidates
+          : candidates.filter((candidate) => candidate !== this.lastWrittenCredentialsJson)
+      if (changedCandidates.length === 0) {
         return { status: 'unchanged' }
       }
 
-      const match = await this.findManagedAccountForRuntimeCredentials(runtimeContents)
-      if (match.kind !== 'matched') {
+      const acceptedCandidates: {
+        credentialsJson: string
+        match: Extract<ClaudeReadBackMatch, { kind: 'matched' }>
+      }[] = []
+      let sawAmbiguousCandidate = false
+      for (const runtimeContents of changedCandidates) {
+        const match = await this.findManagedAccountForRuntimeCredentials(runtimeContents)
         if (match.kind === 'ambiguous') {
+          sawAmbiguousCandidate = true
+          continue
+        }
+        if (match.kind !== 'matched') {
+          continue
+        }
+        // Why: on cold app start we cannot tell whether matching runtime
+        // credentials are a fresh CLI refresh or stale state unless token
+        // metadata proves runtime is newer than managed storage.
+        if (this.lastWrittenCredentialsJson === null) {
+          if (!this.runtimeCredentialsAreFresher(runtimeContents, match.managedCredentialsJson)) {
+            continue
+          }
+        } else if (this.runtimeCredentialsAreOlder(runtimeContents, match.managedCredentialsJson)) {
+          continue
+        }
+        acceptedCandidates.push({ credentialsJson: runtimeContents, match })
+      }
+      if (acceptedCandidates.length === 0) {
+        if (sawAmbiguousCandidate) {
           console.warn('[claude-runtime-auth] Refusing ambiguous Claude auth read-back')
         }
         return { status: 'rejected' }
       }
-      // Why: on cold app start we cannot tell whether matching runtime
-      // credentials are a fresh CLI refresh or stale state unless token
-      // metadata proves runtime is newer than managed storage.
-      if (
-        this.lastWrittenCredentialsJson === null &&
-        !this.runtimeCredentialsAreFresher(runtimeContents, match.managedCredentialsJson)
-      ) {
-        return { status: 'rejected' }
-      }
+      const { credentialsJson: runtimeContents, match } =
+        this.chooseFreshestReadBackCandidate(acceptedCandidates)
 
       await this.writeManagedCredentials(match.account, runtimeContents)
       if (options.updateLastWrittenCredentialsJson) {
@@ -289,47 +324,35 @@ export class ClaudeRuntimeAuthService {
     }
   }
 
-  private async readRuntimeCredentialsForReadBack(
+  private async readRuntimeCredentialCandidatesForReadBack(
     baselineCredentialsJson: string
-  ): Promise<string | null> {
+  ): Promise<string[]> {
     const paths = this.pathResolver.getRuntimePaths()
     const fileCredentials = existsSync(paths.credentialsPath)
       ? readFileSync(paths.credentialsPath, 'utf-8')
       : null
+    const candidates: string[] = []
+    const pushCandidate = (credentialsJson: string | null): void => {
+      if (credentialsJson && !candidates.includes(credentialsJson)) {
+        candidates.push(credentialsJson)
+      }
+    }
     if (process.platform === 'darwin') {
       const scopedKeychainCredentials = await this.readActiveClaudeKeychainCredentialsBestEffort(
         paths.configDir
       )
       const legacyKeychainCredentials = await this.readActiveClaudeKeychainCredentialsBestEffort()
       if (this.lastWrittenCredentialsJson === null) {
-        if (scopedKeychainCredentials && scopedKeychainCredentials !== baselineCredentialsJson) {
-          return scopedKeychainCredentials
-        }
-        if (legacyKeychainCredentials && legacyKeychainCredentials !== baselineCredentialsJson) {
-          return legacyKeychainCredentials
-        }
-        if (fileCredentials && fileCredentials !== baselineCredentialsJson) {
-          return fileCredentials
-        }
-        return scopedKeychainCredentials ?? legacyKeychainCredentials ?? fileCredentials
+        pushCandidate(scopedKeychainCredentials)
+        pushCandidate(legacyKeychainCredentials)
+        pushCandidate(fileCredentials)
+        return candidates.filter((candidate) => candidate !== baselineCredentialsJson)
       }
-      if (
-        scopedKeychainCredentials &&
-        scopedKeychainCredentials !== this.lastWrittenCredentialsJson
-      ) {
-        return scopedKeychainCredentials
-      }
-      if (
-        legacyKeychainCredentials &&
-        legacyKeychainCredentials !== this.lastWrittenCredentialsJson
-      ) {
-        return legacyKeychainCredentials
-      }
+      pushCandidate(scopedKeychainCredentials)
+      pushCandidate(legacyKeychainCredentials)
     }
-    if (!fileCredentials) {
-      return null
-    }
-    return fileCredentials
+    pushCandidate(fileCredentials)
+    return candidates
   }
 
   private getPreparation(): ClaudeRuntimeAuthPreparation {
@@ -404,6 +427,12 @@ export class ClaudeRuntimeAuthService {
         managedIdentity?.organizationUuid ??
         managedOauthIdentity.organizationUuid
     )
+    if (!identity.email) {
+      return 'unverifiable'
+    }
+    if (account.email && this.normalizeField(account.email) !== identity.email) {
+      return 'mismatch'
+    }
     if (selectedOrganizationUuid && !identity.organizationUuid) {
       return 'unverifiable'
     }
@@ -416,12 +445,6 @@ export class ClaudeRuntimeAuthService {
     }
     if (!selectedOrganizationUuid && identity.organizationUuid) {
       return 'unverifiable'
-    }
-    if (!identity.email) {
-      return 'unverifiable'
-    }
-    if (account.email && identity.email && this.normalizeField(account.email) !== identity.email) {
-      return 'mismatch'
     }
 
     return 'match'
@@ -452,6 +475,39 @@ export class ClaudeRuntimeAuthService {
     return (
       runtimeFreshness !== null && managedFreshness !== null && runtimeFreshness > managedFreshness
     )
+  }
+
+  private runtimeCredentialsAreOlder(
+    runtimeCredentialsJson: string,
+    managedCredentialsJson: string
+  ): boolean {
+    const runtimeFreshness = this.readFreshnessFromCredentials(runtimeCredentialsJson)
+    const managedFreshness = this.readFreshnessFromCredentials(managedCredentialsJson)
+    return (
+      runtimeFreshness !== null && managedFreshness !== null && runtimeFreshness < managedFreshness
+    )
+  }
+
+  private chooseFreshestReadBackCandidate(
+    candidates: {
+      credentialsJson: string
+      match: Extract<ClaudeReadBackMatch, { kind: 'matched' }>
+    }[]
+  ): {
+    credentialsJson: string
+    match: Extract<ClaudeReadBackMatch, { kind: 'matched' }>
+  } {
+    return candidates.reduce((freshest, candidate) => {
+      const candidateFreshness = this.readFreshnessFromCredentials(candidate.credentialsJson)
+      const freshestFreshness = this.readFreshnessFromCredentials(freshest.credentialsJson)
+      if (
+        candidateFreshness !== null &&
+        (freshestFreshness === null || candidateFreshness > freshestFreshness)
+      ) {
+        return candidate
+      }
+      return freshest
+    })
   }
 
   private readFreshnessFromCredentials(credentialsJson: string): number | null {
@@ -549,16 +605,50 @@ export class ClaudeRuntimeAuthService {
     }
   }
 
-  private async captureSystemDefaultSnapshot(options: { force: boolean }): Promise<void> {
+  private async captureSystemDefaultSnapshotForManagedEntry(
+    runtimeCredentialsJson: string | null,
+    managedCredentialsJson: string
+  ): Promise<void> {
+    const snapshotPath = this.getSystemDefaultSnapshotPath()
+    const existingSnapshot = this.readSystemDefaultSnapshot(snapshotPath)
+    if (runtimeCredentialsJson !== managedCredentialsJson) {
+      await this.captureSystemDefaultSnapshot({
+        force: true,
+        previousSnapshot: existingSnapshot,
+        managedCredentialsJson
+      })
+      return
+    }
+    if (existingSnapshot) {
+      await this.captureSystemDefaultSnapshot({
+        force: true,
+        credentialsJsonOverride: existingSnapshot.credentialsJson,
+        previousSnapshot: existingSnapshot,
+        managedCredentialsJson
+      })
+      return
+    }
+    await this.captureSystemDefaultSnapshot({ force: false })
+  }
+
+  private async captureSystemDefaultSnapshot(options: {
+    force: boolean
+    credentialsJsonOverride?: string | null
+    previousSnapshot?: ClaudeSystemDefaultSnapshot | null
+    managedCredentialsJson?: string
+  }): Promise<void> {
     const snapshotPath = this.getSystemDefaultSnapshotPath()
     if (!options.force && existsSync(snapshotPath)) {
       return
     }
 
     const paths = this.pathResolver.getRuntimePaths()
-    const credentialsJson = existsSync(paths.credentialsPath)
-      ? readFileSync(paths.credentialsPath, 'utf-8')
-      : null
+    const credentialsJson =
+      options.credentialsJsonOverride !== undefined
+        ? options.credentialsJsonOverride
+        : existsSync(paths.credentialsPath)
+          ? readFileSync(paths.credentialsPath, 'utf-8')
+          : null
     const keychainCredentialsJson = await this.readAggregateClaudeKeychainCredentialsBestEffort(
       paths.configDir
     )
@@ -576,20 +666,32 @@ export class ClaudeRuntimeAuthService {
     ) {
       throw new Error('Cannot capture current Claude Keychain credentials')
     }
+    const scopedKeychainCredentialsJson =
+      scopedKeychainCredentials.status === 'captured'
+        ? this.snapshotKeychainCredentials(
+            scopedKeychainCredentials.credentialsJson,
+            options.previousSnapshot,
+            'scoped',
+            options.managedCredentialsJson
+          )
+        : undefined
+    const legacyKeychainSnapshotJson =
+      legacyKeychainCredentialsJson.status === 'captured'
+        ? this.snapshotKeychainCredentials(
+            legacyKeychainCredentialsJson.credentialsJson,
+            options.previousSnapshot,
+            'legacy',
+            options.managedCredentialsJson
+          )
+        : undefined
     const configOauthAccount = this.readRuntimeOauthAccount()
     const snapshot: ClaudeSystemDefaultSnapshot = {
       credentialsJson,
       configOauthAccount:
         configOauthAccount === RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR ? null : configOauthAccount,
       keychainCredentialsJson,
-      scopedKeychainCredentialsJson:
-        scopedKeychainCredentials.status === 'captured'
-          ? scopedKeychainCredentials.credentialsJson
-          : undefined,
-      legacyKeychainCredentialsJson:
-        legacyKeychainCredentialsJson.status === 'captured'
-          ? legacyKeychainCredentialsJson.credentialsJson
-          : undefined,
+      scopedKeychainCredentialsJson,
+      legacyKeychainCredentialsJson: legacyKeychainSnapshotJson,
       scopedKeychainCredentialsCaptured: scopedKeychainCredentials.status === 'captured',
       legacyKeychainCredentialsCaptured: legacyKeychainCredentialsJson.status === 'captured',
       capturedAt: Date.now()
@@ -661,6 +763,121 @@ export class ClaudeRuntimeAuthService {
     }
   }
 
+  private async clearRuntimeAuthForAccount(
+    account: ClaudeManagedAccount,
+    managedOauthAccount: unknown
+  ): Promise<void> {
+    const paths = this.pathResolver.getRuntimePaths()
+    let clearedCredentials = false
+    if (
+      this.runtimeCredentialsBelongToAccount(
+        this.readRuntimeCredentialsFile(),
+        account,
+        managedOauthAccount
+      )
+    ) {
+      rmSync(paths.credentialsPath, { force: true })
+      clearedCredentials = true
+    }
+    if (process.platform === 'darwin') {
+      clearedCredentials =
+        (await this.clearActiveKeychainCredentialsForAccount(
+          account,
+          managedOauthAccount,
+          paths.configDir
+        )) || clearedCredentials
+      clearedCredentials =
+        (await this.clearActiveKeychainCredentialsForAccount(account, managedOauthAccount)) ||
+        clearedCredentials
+    }
+    this.restoreRuntimeOauthAccountIfOwned(null, managedOauthAccount, {
+      allowNullOwnership: clearedCredentials
+    })
+  }
+
+  private async restoreSystemDefaultSnapshotForMissingManagedCredentials(
+    account: ClaudeManagedAccount,
+    managedOauthAccount: unknown
+  ): Promise<void> {
+    const snapshot = this.readSystemDefaultSnapshot(this.getSystemDefaultSnapshotPath())
+    if (!snapshot) {
+      await this.clearRuntimeAuthForAccount(account, managedOauthAccount)
+      this.clearLastWrittenRuntimeState()
+      return
+    }
+    const paths = this.pathResolver.getRuntimePaths()
+    let restoredCredentials = false
+    if (
+      this.runtimeCredentialsBelongToAccount(
+        this.readRuntimeCredentialsFile(),
+        account,
+        managedOauthAccount
+      )
+    ) {
+      if (snapshot.credentialsJson !== null) {
+        this.writeRuntimeCredentials(snapshot.credentialsJson)
+      } else {
+        rmSync(paths.credentialsPath, { force: true })
+      }
+      restoredCredentials = true
+    }
+    if (process.platform === 'darwin') {
+      restoredCredentials =
+        (await this.restoreKeychainSnapshotValueForAccount(
+          this.readKeychainSnapshotValue(snapshot, 'scoped'),
+          account,
+          managedOauthAccount,
+          paths.configDir
+        )) || restoredCredentials
+      restoredCredentials =
+        (await this.restoreKeychainSnapshotValueForAccount(
+          this.readKeychainSnapshotValue(snapshot, 'legacy'),
+          account,
+          managedOauthAccount
+        )) || restoredCredentials
+    }
+    this.restoreRuntimeOauthAccountIfOwned(snapshot.configOauthAccount, managedOauthAccount, {
+      allowNullOwnership: restoredCredentials
+    })
+    this.clearLastWrittenRuntimeState()
+  }
+
+  private readRuntimeCredentialsFile(): string | null {
+    const credentialsPath = this.pathResolver.getRuntimePaths().credentialsPath
+    return existsSync(credentialsPath) ? readFileSync(credentialsPath, 'utf-8') : null
+  }
+
+  private runtimeCredentialsBelongToAccount(
+    credentialsJson: string | null,
+    account: ClaudeManagedAccount,
+    managedOauthAccount: unknown
+  ): boolean {
+    if (!credentialsJson) {
+      return false
+    }
+    const identity = this.readIdentityFromCredentials(credentialsJson)
+    if (
+      !identity?.email ||
+      (account.email && this.normalizeField(account.email) !== identity.email)
+    ) {
+      return false
+    }
+    const oauthIdentity = this.readIdentityFromOauthAccount(managedOauthAccount)
+    const selectedOrganizationUuid = this.normalizeField(
+      account.organizationUuid ?? oauthIdentity.organizationUuid
+    )
+    if (selectedOrganizationUuid) {
+      return identity.organizationUuid === selectedOrganizationUuid
+    }
+    return !identity.organizationUuid
+  }
+
+  private clearLastWrittenRuntimeState(): void {
+    this.lastWrittenCredentialsJson = null
+    this.lastWrittenOauthAccount = null
+    this.hasLastWrittenOauthAccount = false
+  }
+
   private restoreRuntimeCredentialsIfOwned(
     credentialsJson: string | null,
     previouslyWrittenCredentialsJson: string | null
@@ -689,6 +906,9 @@ export class ClaudeRuntimeAuthService {
     options: { allowNullOwnership: boolean }
   ): void {
     const currentOauthAccount = this.readRuntimeOauthAccount()
+    if (currentOauthAccount === RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR) {
+      return
+    }
     if (
       (ownedOauthAccount === null || ownedOauthAccount === undefined) &&
       !options.allowNullOwnership
@@ -696,9 +916,13 @@ export class ClaudeRuntimeAuthService {
       return
     }
     if (
-      currentOauthAccount === RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR ||
-      !this.jsonValuesEqual(currentOauthAccount, ownedOauthAccount)
+      (ownedOauthAccount === null || ownedOauthAccount === undefined) &&
+      options.allowNullOwnership
     ) {
+      this.writeRuntimeOauthAccount(oauthAccount)
+      return
+    }
+    if (!this.jsonValuesEqual(currentOauthAccount, ownedOauthAccount)) {
       return
     }
     this.writeRuntimeOauthAccount(oauthAccount)
@@ -729,6 +953,42 @@ export class ClaudeRuntimeAuthService {
     await (credentialsJson !== null
       ? writeActiveClaudeKeychainCredentials(credentialsJson, configDir)
       : deleteActiveClaudeKeychainCredentialsStrict(configDir))
+  }
+
+  private async restoreKeychainSnapshotValueForAccount(
+    snapshotValue: ClaudeKeychainSnapshotValue,
+    account: ClaudeManagedAccount,
+    managedOauthAccount: unknown,
+    configDir?: string
+  ): Promise<boolean> {
+    if (snapshotValue.status === 'unknown') {
+      return false
+    }
+    const currentCredentialsJson =
+      await this.readActiveClaudeKeychainCredentialsBestEffort(configDir)
+    if (
+      this.runtimeCredentialsBelongToAccount(currentCredentialsJson, account, managedOauthAccount)
+    ) {
+      await this.restoreActiveClaudeKeychainCredentials(snapshotValue.credentialsJson, configDir)
+      return true
+    }
+    return false
+  }
+
+  private async clearActiveKeychainCredentialsForAccount(
+    account: ClaudeManagedAccount,
+    managedOauthAccount: unknown,
+    configDir?: string
+  ): Promise<boolean> {
+    const currentCredentialsJson =
+      await this.readActiveClaudeKeychainCredentialsBestEffort(configDir)
+    if (
+      this.runtimeCredentialsBelongToAccount(currentCredentialsJson, account, managedOauthAccount)
+    ) {
+      await deleteActiveClaudeKeychainCredentialsStrict(configDir)
+      return true
+    }
+    return false
   }
 
   private readRuntimeOauthAccount(): unknown {
@@ -781,12 +1041,15 @@ export class ClaudeRuntimeAuthService {
     const snapshot = this.asRecord(value)
     return (
       snapshot !== null &&
+      Object.hasOwn(snapshot, 'credentialsJson') &&
       this.isOptionalNullableString(snapshot.credentialsJson) &&
       this.isOptionalNullableString(snapshot.keychainCredentialsJson) &&
       this.isOptionalNullableString(snapshot.scopedKeychainCredentialsJson) &&
       this.isOptionalNullableString(snapshot.legacyKeychainCredentialsJson) &&
       this.isOptionalBoolean(snapshot.scopedKeychainCredentialsCaptured) &&
       this.isOptionalBoolean(snapshot.legacyKeychainCredentialsCaptured) &&
+      this.hasValidKeychainSnapshotValue(snapshot, 'scoped') &&
+      this.hasValidKeychainSnapshotValue(snapshot, 'legacy') &&
       (snapshot.capturedAt === undefined || typeof snapshot.capturedAt === 'number')
     )
   }
@@ -797,6 +1060,39 @@ export class ClaudeRuntimeAuthService {
 
   private isOptionalBoolean(value: unknown): boolean {
     return value === undefined || typeof value === 'boolean'
+  }
+
+  private snapshotKeychainCredentials(
+    credentialsJson: string | null,
+    previousSnapshot: ClaudeSystemDefaultSnapshot | null | undefined,
+    service: 'scoped' | 'legacy',
+    managedCredentialsJson: string | undefined
+  ): string | null {
+    if (managedCredentialsJson && credentialsJson === managedCredentialsJson && previousSnapshot) {
+      const previousValue = this.readKeychainSnapshotValue(previousSnapshot, service)
+      if (previousValue.status === 'captured') {
+        return previousValue.credentialsJson
+      }
+    }
+    return credentialsJson
+  }
+
+  private hasValidKeychainSnapshotValue(
+    snapshot: Record<string, unknown>,
+    service: 'scoped' | 'legacy'
+  ): boolean {
+    const capturedKey =
+      service === 'scoped'
+        ? 'scopedKeychainCredentialsCaptured'
+        : 'legacyKeychainCredentialsCaptured'
+    if (snapshot[capturedKey] === false) {
+      return true
+    }
+    const credentialsKey =
+      service === 'scoped' ? 'scopedKeychainCredentialsJson' : 'legacyKeychainCredentialsJson'
+    return (
+      Object.hasOwn(snapshot, credentialsKey) || Object.hasOwn(snapshot, 'keychainCredentialsJson')
+    )
   }
 
   private readKeychainSnapshotValue(
