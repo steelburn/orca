@@ -606,13 +606,45 @@ function ThreadRow({
           {thread.paneTitle}
         </span>
         <span className="inline-flex shrink-0 items-center gap-1.5 pt-[3px]">
-          {thread.unread ? (
-            <BellDot
-              className="size-3.5 shrink-0 text-primary"
-              fill="currentColor"
-              aria-label="Unread"
-            />
-          ) : null}
+          {/* Why (bell slot doubles as Mark-unread): the read/unread state and
+              its toggle belong together. For unread threads, the BellDot is
+              the static cue. For read threads, the slot reveals a Mark-unread
+              icon button on hover — same place the bell lives, no jarring
+              jump to a separate cluster. Reserved `size-6` so the timestamp
+              doesn't shift between read/unread or on hover. */}
+          <span className="relative inline-flex size-6 shrink-0 items-center justify-center">
+            {thread.unread ? (
+              <BellDot
+                className="size-3.5 shrink-0 text-primary"
+                fill="currentColor"
+                aria-label="Unread"
+              />
+            ) : (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon-xs"
+                    aria-label="Mark thread unread"
+                    className={cn(
+                      'transition-opacity',
+                      'pointer-events-none invisible opacity-0',
+                      'group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100'
+                    )}
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      onMarkUnread()
+                    }}
+                    onMouseDown={(event) => event.stopPropagation()}
+                  >
+                    <BellOff className="size-3" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="left">Mark thread unread</TooltipContent>
+              </Tooltip>
+            )}
+          </span>
           <EventTime timestamp={latest.timestamp} />
         </span>
       </div>
@@ -621,42 +653,19 @@ function ThreadRow({
         <span className="min-w-0 flex-1 truncate text-[11px] text-muted-foreground">
           {thread.worktree.displayName}
         </span>
-        {/* Why (per-card actions on hover): the right-pane header buttons read
-            as easy-to-miss chrome; surfacing them on the card itself keeps the
-            action where the user's attention already is. Mark-unread only
-            appears when the thread is read — selecting an unread thread
-            auto-marks it read, so a "mark read" button would be redundant.
-            Why (reserved slot, opacity-only toggle): keep the action cluster
-            always laid out with `invisible` + `pointer-events-none` so the
-            worktree-name's flex-1 width doesn't recompute on hover. Toggling
-            `hidden`/`inline-flex` made the row's text reflow under the cursor. */}
+        {/* Why (Jump-to-workspace lives on the secondary row): the bell slot
+            on the title row already holds the unread/Mark-unread state, so
+            the navigation action gets its own slot down here aligned with
+            the worktree name. Reserved layout via `invisible` +
+            `pointer-events-none` keeps the worktree-name's flex-1 width
+            stable across hover. */}
         <span
           className={cn(
-            'ml-auto inline-flex shrink-0 items-center gap-1 transition-opacity',
+            'ml-auto inline-flex shrink-0 items-center transition-opacity',
             'pointer-events-none invisible opacity-0',
             'group-hover:pointer-events-auto group-hover:visible group-hover:opacity-100'
           )}
         >
-          {thread.unread ? null : (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="icon-xs"
-                  aria-label="Mark thread unread"
-                  onClick={(event) => {
-                    event.stopPropagation()
-                    onMarkUnread()
-                  }}
-                  onMouseDown={(event) => event.stopPropagation()}
-                >
-                  <BellOff className="size-3" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="left">Mark thread unread</TooltipContent>
-            </Tooltip>
-          )}
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
