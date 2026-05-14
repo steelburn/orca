@@ -7,6 +7,7 @@ import { fetchViaPty } from './claude-pty'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
 import {
   readActiveClaudeKeychainCredentials,
+  readActiveClaudeKeychainCredentialsStrict,
   readManagedClaudeKeychainCredentials
 } from '../claude-accounts/keychain'
 
@@ -107,8 +108,29 @@ async function readFromKeychain(configDir?: string): Promise<string | null> {
     return null
   }
 
+  if (configDir) {
+    const scopedToken = await readTokenFromStrictKeychain(configDir)
+    if (scopedToken) {
+      return scopedToken
+    }
+    const legacyToken = await readTokenFromStrictKeychain()
+    if (legacyToken) {
+      return legacyToken
+    }
+    return null
+  }
+
   try {
     const credentials = await readActiveClaudeKeychainCredentials(configDir)
+    return credentials ? parseOAuthTokenFromCredentialsJson(credentials) : null
+  } catch {
+    return null
+  }
+}
+
+async function readTokenFromStrictKeychain(configDir?: string): Promise<string | null> {
+  try {
+    const credentials = await readActiveClaudeKeychainCredentialsStrict(configDir)
     return credentials ? parseOAuthTokenFromCredentialsJson(credentials) : null
   } catch {
     return null

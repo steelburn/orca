@@ -297,6 +297,29 @@ describe('ClaudeRuntimeAuthService', () => {
     expect(testState.runtimeWriteConfigDir).toBe(expectedRuntimeConfigDir())
   })
 
+  it('restores system default instead of materializing corrupt managed credentials', async () => {
+    const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
+    const systemCredentials = createClaudeCredentialsJson('system@example.com', 'system')
+    writeFileSync(runtimeCredentialsPath, systemCredentials, 'utf-8')
+    testState.scopedKeychainCredentials = systemCredentials
+    testState.legacyKeychainCredentials = systemCredentials
+    const managedAuthPath = createManagedClaudeAuth(testState.userDataDir, 'account-1', '{not-json')
+    const settings = createSettings({
+      claudeManagedAccounts: [createClaudeAccount('account-1', managedAuthPath)],
+      activeClaudeManagedAccountId: 'account-1'
+    })
+    const store = createStore(settings)
+
+    const { ClaudeRuntimeAuthService } = await import('./runtime-auth-service')
+    const service = new ClaudeRuntimeAuthService(store as never)
+    await service.syncForCurrentSelection()
+
+    expect(store.getSettings().activeClaudeManagedAccountId).toBeNull()
+    expect(readFileSync(runtimeCredentialsPath, 'utf-8')).toBe(systemCredentials)
+    expect(testState.scopedKeychainCredentials).toBe(systemCredentials)
+    expect(testState.legacyKeychainCredentials).toBe(systemCredentials)
+  })
+
   it('removes runtime credentials when deselecting with a missing system-default snapshot', async () => {
     const runtimeCredentialsPath = join(testState.fakeHomeDir, '.claude', '.credentials.json')
     writeFileSync(runtimeCredentialsPath, '{"token":"managed"}\n', 'utf-8')

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchClaudeRateLimits } from './claude-fetcher'
-import { readActiveClaudeKeychainCredentials } from '../claude-accounts/keychain'
+import { readActiveClaudeKeychainCredentialsStrict } from '../claude-accounts/keychain'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
 
 const { netFetchMock, readFileMock, resolveProxyMock, setProxyMock } = vi.hoisted(() => ({
@@ -31,7 +31,8 @@ vi.mock('./claude-pty', () => ({
 }))
 
 vi.mock('../claude-accounts/keychain', () => ({
-  readActiveClaudeKeychainCredentials: vi.fn()
+  readActiveClaudeKeychainCredentials: vi.fn(),
+  readActiveClaudeKeychainCredentialsStrict: vi.fn()
 }))
 
 const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
@@ -48,6 +49,7 @@ describe('fetchClaudeRateLimits', () => {
     setPlatform('darwin')
     vi.clearAllMocks()
     readFileMock.mockRejectedValue(new Error('missing file'))
+    vi.mocked(readActiveClaudeKeychainCredentialsStrict).mockResolvedValue(null)
     resolveProxyMock.mockResolvedValue('DIRECT')
     netFetchMock.mockResolvedValue(
       new Response(
@@ -74,7 +76,7 @@ describe('fetchClaudeRateLimits', () => {
       stripAuthEnv: false,
       provenance: 'system'
     }
-    vi.mocked(readActiveClaudeKeychainCredentials).mockResolvedValue(
+    vi.mocked(readActiveClaudeKeychainCredentialsStrict).mockResolvedValueOnce(
       JSON.stringify({
         claudeAiOauth: {
           accessToken: 'oauth-token',
@@ -90,7 +92,7 @@ describe('fetchClaudeRateLimits', () => {
       weekly: { usedPercent: 34 }
     })
 
-    expect(readActiveClaudeKeychainCredentials).toHaveBeenCalledWith(configDir)
+    expect(readActiveClaudeKeychainCredentialsStrict).toHaveBeenCalledWith(configDir)
     expect(netFetchMock).toHaveBeenCalledWith(
       'https://api.anthropic.com/api/oauth/usage',
       expect.objectContaining({
@@ -109,7 +111,9 @@ describe('fetchClaudeRateLimits', () => {
       stripAuthEnv: false,
       provenance: 'system'
     }
-    vi.mocked(readActiveClaudeKeychainCredentials).mockRejectedValue(new Error('Keychain locked'))
+    vi.mocked(readActiveClaudeKeychainCredentialsStrict).mockRejectedValue(
+      new Error('Keychain locked')
+    )
     readFileMock.mockResolvedValue(
       JSON.stringify({
         claudeAiOauth: {
@@ -130,6 +134,42 @@ describe('fetchClaudeRateLimits', () => {
       expect.objectContaining({
         headers: expect.objectContaining({
           Authorization: 'Bearer file-oauth-token'
+        })
+      })
+    )
+  })
+
+  it('falls back to legacy Keychain when scoped credentials are unusable', async () => {
+    const configDir = '/Users/test/.claude'
+    const authPreparation: ClaudeRuntimeAuthPreparation = {
+      configDir,
+      envPatch: {},
+      stripAuthEnv: false,
+      provenance: 'system'
+    }
+    vi.mocked(readActiveClaudeKeychainCredentialsStrict)
+      .mockResolvedValueOnce('{not-json')
+      .mockResolvedValueOnce(
+        JSON.stringify({
+          claudeAiOauth: {
+            accessToken: 'legacy-oauth-token',
+            expiresAt: Date.now() + 60_000
+          }
+        })
+      )
+
+    await expect(fetchClaudeRateLimits({ authPreparation })).resolves.toMatchObject({
+      provider: 'claude',
+      status: 'ok'
+    })
+
+    expect(readActiveClaudeKeychainCredentialsStrict).toHaveBeenNthCalledWith(1, configDir)
+    expect(readActiveClaudeKeychainCredentialsStrict).toHaveBeenNthCalledWith(2, undefined)
+    expect(netFetchMock).toHaveBeenCalledWith(
+      'https://api.anthropic.com/api/oauth/usage',
+      expect.objectContaining({
+        headers: expect.objectContaining({
+          Authorization: 'Bearer legacy-oauth-token'
         })
       })
     )

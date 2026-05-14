@@ -171,9 +171,9 @@ export class ClaudeRuntimeAuthService {
     }
 
     let credentialsJson = await this.readManagedCredentials(activeAccount)
-    if (!credentialsJson) {
+    if (!credentialsJson || !this.isValidCredentialsJsonObject(credentialsJson)) {
       console.warn(
-        '[claude-runtime-auth] Active managed account is missing credentials, restoring system default'
+        '[claude-runtime-auth] Active managed account is missing or has invalid credentials, restoring system default'
       )
       this.store.updateSettings({ activeClaudeManagedAccountId: null })
       if (this.lastSyncedAccountId !== null) {
@@ -209,7 +209,10 @@ export class ClaudeRuntimeAuthService {
           updateLastWrittenCredentialsJson: true
         })
         if (readBackResult.status === 'persisted') {
-          credentialsJson = (await this.readManagedCredentials(activeAccount)) ?? credentialsJson
+          const updatedCredentialsJson = await this.readManagedCredentials(activeAccount)
+          if (updatedCredentialsJson && this.isValidCredentialsJsonObject(updatedCredentialsJson)) {
+            credentialsJson = updatedCredentialsJson
+          }
         }
       }
     }
@@ -467,6 +470,14 @@ export class ClaudeRuntimeAuthService {
       organizationUuid: this.normalizeField(
         this.readString(oauth, 'organizationUuid') ?? this.readString(oauth, 'organizationId')
       )
+    }
+  }
+
+  private isValidCredentialsJsonObject(credentialsJson: string): boolean {
+    try {
+      return this.asRecord(JSON.parse(credentialsJson)) !== null
+    } catch {
+      return false
     }
   }
 
