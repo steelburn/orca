@@ -1,6 +1,6 @@
 {
   "name": "orca",
-  "version": "1.4.0",
+  "version": "1.4.1-rc.0",
   "description": "Next-gen IDE for parallel agentic development",
   "homepage": "https://github.com/stablyai/orca",
   "author": "stablyai",
@@ -174,7 +174,8 @@
     ],
     "patchedDependencies": {
       "node-pty@1.1.0": "config/patches/node-pty@1.1.0.patch",
-      "@xterm/addon-ligatures@0.11.0-beta.216": "config/patches/@xterm__addon-ligatures@0.11.0-beta.216.patch"
+      "@xterm/addon-ligatures@0.11.0-beta.216": "config/patches/@xterm__addon-ligatures@0.11.0-beta.216.patch",
+      "@xterm/addon-webgl@0.20.0-beta.215": "config/patches/@xterm__addon-webgl@0.20.0-beta.215.patch"
     }
   }
 }

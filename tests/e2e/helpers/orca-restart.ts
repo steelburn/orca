@@ -19,11 +19,7 @@ import { execSync } from 'child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
-import {
-  closeElectronApp,
-  forceKillProcessTreeSnapshot,
-  type ProcessTreeSnapshot
-} from './electron-process-tree'
+import { cleanupE2EDaemons, closeElectronAppForE2E } from './electron-process-shutdown'
 
 type LaunchedOrca = {
   app: ElectronApplication
@@ -36,7 +32,7 @@ type RestartSession = {
   /** Gracefully close a launch, letting beforeunload flush session state. */
   close: (app: ElectronApplication) => Promise<void>
   /** Remove the shared userDataDir after the test is done. */
-  dispose: () => void
+  dispose: () => Promise<void>
 }
 
 function shouldLaunchHeadful(testInfo: TestInfo): boolean {
@@ -65,7 +61,6 @@ export function createRestartSession(testInfo: TestInfo): RestartSession {
   const mainPath = path.join(process.cwd(), 'out', 'main', 'index.js')
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-restart-'))
   const headful = shouldLaunchHeadful(testInfo)
-  const processSnapshots: ProcessTreeSnapshot[] = []
 
   // Why: this helper bypasses the shared `electronApp` fixture, so it must
   // seed the same dismissed onboarding state or the full-screen overlay covers
@@ -104,18 +99,11 @@ export function createRestartSession(testInfo: TestInfo): RestartSession {
   }
 
   const close = async (app: ElectronApplication): Promise<void> => {
-    // Why: restart specs need daemon children to survive the first close so the
-    // second launch can warm-reattach. Keep snapshots and reap them at dispose.
-    const snapshot = await closeElectronApp(app)
-    if (snapshot) {
-      processSnapshots.push(snapshot)
-    }
+    await closeElectronAppForE2E(app)
   }
 
-  const dispose = (): void => {
-    for (const snapshot of processSnapshots.reverse()) {
-      forceKillProcessTreeSnapshot(snapshot)
-    }
+  const dispose = async (): Promise<void> => {
+    await cleanupE2EDaemons(userDataDir)
     if (existsSync(userDataDir)) {
       rmSync(userDataDir, { recursive: true, force: true })
     }

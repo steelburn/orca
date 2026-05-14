@@ -25,7 +25,7 @@ import { execSync } from 'child_process'
 import os from 'os'
 import path from 'path'
 import { TEST_REPO_PATH_FILE } from '../global-setup'
-import { closeElectronApp } from './electron-process-tree'
+import { cleanupE2EDaemons, closeElectronAppForE2E } from './electron-process-shutdown'
 
 type OrcaTestFixtures = {
   electronApp: ElectronApplication
@@ -220,9 +220,10 @@ export const test = base.extend<OrcaTestFixtures, OrcaWorkerFixtures>({
       }
     })
     await provideFixture(app)
-    // Why: Electron can leave renderer/PTY children alive after close in CI;
-    // killing the captured tree keeps Playwright worker teardown bounded.
-    await closeElectronApp(app, { killProcessTreeAfterClose: true })
+    // Why: the Playwright close promise can settle before all Electron and PTY
+    // descendants are gone in CI; worker teardown then hangs on open handles.
+    await closeElectronAppForE2E(app)
+    await cleanupE2EDaemons(userDataDir)
     rmSync(userDataDir, { recursive: true, force: true })
   },
 

@@ -49,6 +49,7 @@ import { claudeHookService } from './claude/hook-service'
 import { codexHookService } from './codex/hook-service'
 import { geminiHookService } from './gemini/hook-service'
 import { cursorHookService } from './cursor/hook-service'
+import { droidHookService } from './droid/hook-service'
 import { getPtyIdForPaneKey, registerPaneKeyTeardownListener, getLocalPtyProvider } from './ipc/pty'
 import { AgentBrowserBridge } from './browser/agent-browser-bridge'
 import { browserManager } from './browser/browser-manager'
@@ -71,6 +72,8 @@ let runtime: OrcaRuntimeService | null = null
 let rateLimits: RateLimitService | null = null
 let runtimeRpc: OrcaRuntimeRpcServer | null = null
 let starNag: StarNagService | null = null
+let watcherShutdownPromise: Promise<void> | null = null
+let watcherShutdownDone = false
 
 installUncaughtPipeErrorGuard()
 // Why: propagate the Orca app version into `process.env` so PTY-env
@@ -307,6 +310,24 @@ function openMainWindow(): BrowserWindow {
   return window
 }
 
+function shutdownWatchersOnce(): Promise<void> {
+  if (watcherShutdownDone) {
+    return Promise.resolve()
+  }
+  if (!watcherShutdownPromise) {
+    // Why: @parcel/watcher tears down native async work during unsubscribe.
+    // Electron must wait for that cleanup before Node's environment exits.
+    watcherShutdownPromise = closeAllWatchers()
+      .catch((error) => {
+        console.error('[filesystem-watcher] shutdown failed:', error)
+      })
+      .then(() => {
+        watcherShutdownDone = true
+      })
+  }
+  return watcherShutdownPromise
+}
+
 // Why: Pi-style persistent spinner — cursor-agent re-emits its own
 // "Cursor Agent" OSC title on every internal redraw, so a single synthesized
 // "⠋ Cursor Agent" frame gets silently overwritten in the renderer within
@@ -340,6 +361,11 @@ const SYNTHETIC_TITLE_PROFILES: Record<string, SyntheticTitleProfile> = {
     workingLabel: 'OpenCode',
     permissionLabel: 'OpenCode - action required',
     idleLabel: 'OpenCode ready'
+  },
+  droid: {
+    workingLabel: 'Droid',
+    permissionLabel: 'Droid - action required',
+    idleLabel: 'Droid ready'
   }
 }
 
@@ -500,7 +526,8 @@ app.whenReady().then(async () => {
     ['claude', () => claudeHookService.install()],
     ['codex', () => codexHookService.install()],
     ['gemini', () => geminiHookService.install()],
-    ['cursor', () => cursorHookService.install()]
+    ['cursor', () => cursorHookService.install()],
+    ['droid', () => droidHookService.install()]
   ])
 
   registerAppMenu({
@@ -668,7 +695,7 @@ app.on('will-quit', (e) => {
   // holding ports and leaving stale session state on disk.
   runtime?.getAgentBrowserBridge()?.destroyAllSessions()
   killAllPty()
-  void closeAllWatchers()
+  const watcherShutdown = shutdownWatchersOnce()
   store?.flush()
 
   // Why: disconnectDaemon writes final checkpoints via async getSnapshot RPCs.
@@ -711,7 +738,7 @@ app.on('will-quit', (e) => {
     // inside `shutdownTelemetry()` are caught by the client itself — we
     // catch again here defensively so a flush failure cannot cancel the
     // quit chain.
-    Promise.allSettled([disconnectDaemon(), rpcStopAndClear])
+    Promise.allSettled([disconnectDaemon(), rpcStopAndClear, watcherShutdown])
       .then(() => shutdownTelemetry())
       .catch(() => {
         /* swallow — telemetry must never prevent app.quit() */

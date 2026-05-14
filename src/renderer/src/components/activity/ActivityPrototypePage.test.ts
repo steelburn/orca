@@ -6,6 +6,7 @@ import {
 import type { Repo, TerminalTab, Worktree } from '../../../../shared/types'
 import type { RetainedAgentEntry } from '@/store/slices/agent-status'
 import {
+  activityThreadResponseRenderPreview,
   activityThreadMatchesSearchQuery,
   buildActivityEvents,
   buildAgentPaneThreads
@@ -98,7 +99,8 @@ function makeRetainedDoneEntry(tab: TerminalTab): RetainedAgentEntry {
       paneKey: 'tab-1:1',
       terminalTitle: 'Claude',
       stateHistory: [],
-      agentType: 'claude'
+      agentType: 'claude',
+      lastAssistantMessage: 'Retained response preview'
     },
     worktreeId: 'wt-1',
     tab,
@@ -107,23 +109,42 @@ function makeRetainedDoneEntry(tab: TerminalTab): RetainedAgentEntry {
   }
 }
 
+function makeActivityResult(args: {
+  entries?: Record<string, AgentStatusEntry>
+  retained?: Record<string, RetainedAgentEntry>
+  tab?: TerminalTab
+  now?: number
+}): ReturnType<typeof buildActivityEvents> {
+  const repo = makeRepo()
+  const worktree = makeWorktree()
+  const tab = args.tab ?? makeTab()
+
+  return buildActivityEvents({
+    agentStatusByPaneKey: args.entries ?? {},
+    retainedAgentsByPaneKey: args.retained ?? {},
+    tabsByWorktree: {
+      [worktree.id]: [tab]
+    },
+    worktreeMap: new Map([[worktree.id, worktree]]),
+    repoMap: new Map([[repo.id, repo]]),
+    acknowledgedAgentsByPaneKey: {},
+    now: args.now ?? 3_000
+  })
+}
+
+function makeThreads(result: ReturnType<typeof buildActivityEvents>) {
+  return buildAgentPaneThreads({
+    events: result.events,
+    liveAgentByPaneKey: result.liveAgentByPaneKey
+  })
+}
+
 describe('buildActivityEvents', () => {
   it('keeps a prior done event after the same pane starts working again', () => {
-    const repo = makeRepo()
-    const worktree = makeWorktree()
-    const tab = makeTab()
-
-    const result = buildActivityEvents({
-      agentStatusByPaneKey: {
+    const result = makeActivityResult({
+      entries: {
         'tab-1:1': makeWorkingEntryWithPriorDone()
       },
-      retainedAgentsByPaneKey: {},
-      tabsByWorktree: {
-        [worktree.id]: [tab]
-      },
-      worktreeMap: new Map([[worktree.id, worktree]]),
-      repoMap: new Map([[repo.id, repo]]),
-      acknowledgedAgentsByPaneKey: {},
       now: 2_000
     })
 
@@ -136,10 +157,7 @@ describe('buildActivityEvents', () => {
     expect(result.liveAgentByPaneKey['tab-1:1'].state).toBe('working')
     expect(result.liveAgentByPaneKey['tab-1:1'].entry.prompt).toBe('Second prompt')
 
-    const threads = buildAgentPaneThreads({
-      events: result.events,
-      liveAgentByPaneKey: result.liveAgentByPaneKey
-    })
+    const threads = makeThreads(result)
 
     expect(threads).toHaveLength(1)
     expect(threads[0].paneTitle).toBe('Second prompt')
@@ -148,21 +166,10 @@ describe('buildActivityEvents', () => {
   })
 
   it('does not keep showing a stale live agent as running', () => {
-    const repo = makeRepo()
-    const worktree = makeWorktree()
-    const tab = makeTab()
-
-    const result = buildActivityEvents({
-      agentStatusByPaneKey: {
+    const result = makeActivityResult({
+      entries: {
         'tab-1:1': makeWorkingEntryWithPriorDone()
       },
-      retainedAgentsByPaneKey: {},
-      tabsByWorktree: {
-        [worktree.id]: [tab]
-      },
-      worktreeMap: new Map([[worktree.id, worktree]]),
-      repoMap: new Map([[repo.id, repo]]),
-      acknowledgedAgentsByPaneKey: {},
       now: 2_000 + AGENT_STATUS_STALE_AFTER_MS + 1
     })
 
@@ -171,28 +178,13 @@ describe('buildActivityEvents', () => {
   })
 
   it('creates a thread for a fresh running agent with no historical events', () => {
-    const repo = makeRepo()
-    const worktree = makeWorktree()
-    const tab = makeTab()
-
-    const result = buildActivityEvents({
-      agentStatusByPaneKey: {
+    const result = makeActivityResult({
+      entries: {
         'tab-1:1': makeWorkingEntryWithoutHistory()
-      },
-      retainedAgentsByPaneKey: {},
-      tabsByWorktree: {
-        [worktree.id]: [tab]
-      },
-      worktreeMap: new Map([[worktree.id, worktree]]),
-      repoMap: new Map([[repo.id, repo]]),
-      acknowledgedAgentsByPaneKey: {},
-      now: 3_000
+      }
     })
 
-    const threads = buildAgentPaneThreads({
-      events: result.events,
-      liveAgentByPaneKey: result.liveAgentByPaneKey
-    })
+    const threads = makeThreads(result)
 
     expect(result.events).toHaveLength(0)
     expect(threads).toHaveLength(1)
@@ -207,32 +199,20 @@ describe('buildActivityEvents', () => {
   })
 
   it('matches a custom-titled live thread by its current prompt', () => {
-    const repo = makeRepo()
-    const worktree = makeWorktree()
     const tab = { ...makeTab(), customTitle: 'Pinned agent title' }
     const entry = {
       ...makeWorkingEntryWithoutHistory(),
       prompt: 'Investigate activity live prompt search'
     }
 
-    const result = buildActivityEvents({
-      agentStatusByPaneKey: {
+    const result = makeActivityResult({
+      entries: {
         'tab-1:1': entry
       },
-      retainedAgentsByPaneKey: {},
-      tabsByWorktree: {
-        [worktree.id]: [tab]
-      },
-      worktreeMap: new Map([[worktree.id, worktree]]),
-      repoMap: new Map([[repo.id, repo]]),
-      acknowledgedAgentsByPaneKey: {},
-      now: 3_000
+      tab
     })
 
-    const threads = buildAgentPaneThreads({
-      events: result.events,
-      liveAgentByPaneKey: result.liveAgentByPaneKey
-    })
+    const threads = makeThreads(result)
 
     expect(threads[0].paneTitle).toBe('Pinned agent title')
     expect(
@@ -243,25 +223,93 @@ describe('buildActivityEvents', () => {
     ).toBe(true)
   })
 
-  it('overlays fresh live state onto retained-only activity for a reused pane key', () => {
-    const repo = makeRepo()
-    const worktree = makeWorktree()
+  it('surfaces the current live assistant response as the thread preview', () => {
+    const entry = {
+      ...makeWorkingEntryWithoutHistory(),
+      lastAssistantMessage: 'I updated the tests and checked the activity row.'
+    }
+
+    const result = makeActivityResult({
+      entries: {
+        'tab-1:1': entry
+      }
+    })
+
+    const threads = makeThreads(result)
+
+    expect(threads[0].responsePreview).toBe('I updated the tests and checked the activity row.')
+    expect(
+      activityThreadMatchesSearchQuery({
+        thread: threads[0],
+        searchQuery: 'checked the activity row'
+      })
+    ).toBe(true)
+  })
+
+  it('caps rendered assistant response preview without changing searchable thread text', () => {
+    const longResponse = `${'Preview details '.repeat(80)}activity row searchable tail`
+    const entry = {
+      ...makeWorkingEntryWithoutHistory(),
+      lastAssistantMessage: longResponse
+    }
+
+    const result = makeActivityResult({
+      entries: {
+        'tab-1:1': entry
+      }
+    })
+
+    const threads = makeThreads(result)
+    const renderedPreview = activityThreadResponseRenderPreview({
+      responsePreview: threads[0].responsePreview
+    })
+
+    expect(renderedPreview.length).toBeLessThan(longResponse.length)
+    expect(renderedPreview.endsWith('...')).toBe(true)
+    expect(
+      activityThreadMatchesSearchQuery({
+        thread: threads[0],
+        searchQuery: 'searchable tail'
+      })
+    ).toBe(true)
+  })
+
+  it('does not leave a lone surrogate when capping the rendered response preview', () => {
+    const renderedPreview = activityThreadResponseRenderPreview({
+      responsePreview: `${'a'.repeat(319)}😀tail`
+    })
+    const beforeEllipsis = renderedPreview.slice(0, -3)
+    const lastCode = beforeEllipsis.charCodeAt(beforeEllipsis.length - 1)
+
+    expect(lastCode >= 0xd800 && lastCode <= 0xdbff).toBe(false)
+  })
+
+  it('surfaces the retained done assistant response as the thread preview', () => {
     const tab = makeTab()
 
-    const result = buildActivityEvents({
-      agentStatusByPaneKey: {
-        'tab-1:1': makeWorkingEntryWithoutHistory()
-      },
-      retainedAgentsByPaneKey: {
+    const result = makeActivityResult({
+      retained: {
         'tab-1:1': makeRetainedDoneEntry(tab)
       },
-      tabsByWorktree: {
-        [worktree.id]: [tab]
+      tab
+    })
+
+    const threads = makeThreads(result)
+
+    expect(threads[0].responsePreview).toBe('Retained response preview')
+  })
+
+  it('overlays fresh live state onto retained-only activity for a reused pane key', () => {
+    const tab = makeTab()
+
+    const result = makeActivityResult({
+      entries: {
+        'tab-1:1': makeWorkingEntryWithoutHistory()
       },
-      worktreeMap: new Map([[worktree.id, worktree]]),
-      repoMap: new Map([[repo.id, repo]]),
-      acknowledgedAgentsByPaneKey: {},
-      now: 3_000
+      retained: {
+        'tab-1:1': makeRetainedDoneEntry(tab)
+      },
+      tab
     })
 
     expect(result.events).toHaveLength(1)
@@ -272,13 +320,11 @@ describe('buildActivityEvents', () => {
     expect(result.events[0].entry.prompt).toBe('Retained prior run')
     expect(result.liveAgentByPaneKey['tab-1:1'].state).toBe('working')
 
-    const threads = buildAgentPaneThreads({
-      events: result.events,
-      liveAgentByPaneKey: result.liveAgentByPaneKey
-    })
+    const threads = makeThreads(result)
 
     expect(threads).toHaveLength(1)
     expect(threads[0].paneTitle).toBe('New run')
+    expect(threads[0].responsePreview).toBe('')
     expect(threads[0].latestTimestamp).toBe(3_000)
     expect(threads[0].events[0].entry.prompt).toBe('Retained prior run')
   })

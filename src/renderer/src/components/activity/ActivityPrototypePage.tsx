@@ -29,8 +29,10 @@ import { useSidebarResize } from '@/hooks/useSidebarResize'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
+  DropdownMenuCheckboxItem,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
@@ -38,6 +40,7 @@ import { Toggle } from '@/components/ui/toggle'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { FilledBellIcon } from '../sidebar/WorktreeCardHelpers'
+import CommentMarkdown from '../sidebar/CommentMarkdown'
 import {
   setActivityTerminalPortals,
   type ActivityTerminalPortalTarget
@@ -90,6 +93,7 @@ type AgentPaneThread = {
   agentType: AgentType
   currentAgentState: ActivityLiveAgentState | null
   currentAgentEntry: AgentStatusEntry | null
+  responsePreview: string
   latestTimestamp: number
   latestEvent: ActivityEvent | null
   events: ActivityEvent[]
@@ -110,6 +114,7 @@ type ActivityTerminalPortalDomStatus = {
 type ActivityTerminalPortalSlotId = 'primary' | 'secondary'
 
 const ACTIVITY_TERMINAL_LOADING_LABEL_DELAY_MS = 180
+const ACTIVITY_THREAD_RESPONSE_RENDER_PREVIEW_MAX_LENGTH = 320
 
 const absoluteDateFormatter = new Intl.DateTimeFormat(undefined, {
   year: 'numeric',
@@ -137,6 +142,33 @@ function formatRelativeTime(timestamp: number): string {
   }
   const diffDays = Math.round(diffHours / 24)
   return relativeTimeFormatter.format(diffDays, 'day')
+}
+
+function truncatePreservingSurrogates(value: string, maxLength: number): string {
+  if (value.length <= maxLength) {
+    return value
+  }
+  const truncated = value.slice(0, maxLength)
+  const lastCode = truncated.charCodeAt(truncated.length - 1)
+  if (lastCode >= 0xd800 && lastCode <= 0xdbff) {
+    return truncated.slice(0, -1)
+  }
+  return truncated
+}
+
+export function activityThreadResponseRenderPreview({
+  responsePreview
+}: {
+  responsePreview: string
+}): string {
+  const trimmed = responsePreview.trim()
+  if (trimmed.length <= ACTIVITY_THREAD_RESPONSE_RENDER_PREVIEW_MAX_LENGTH) {
+    return trimmed
+  }
+  return `${truncatePreservingSurrogates(
+    trimmed,
+    ACTIVITY_THREAD_RESPONSE_RENDER_PREVIEW_MAX_LENGTH
+  ).trimEnd()}...`
 }
 
 function paneIdFromPaneKey(paneKey: string): number | null {
@@ -327,6 +359,10 @@ function paneTitleForEntry(entry: AgentStatusEntry, tab: TerminalTab): string {
 
 function paneTitleForEvent(event: ActivityEvent): string {
   return paneTitleForEntry(event.entry, event.tab)
+}
+
+function responsePreviewForEntry(entry: AgentStatusEntry): string {
+  return entry.lastAssistantMessage?.trim() ?? ''
 }
 
 function isActivityEventState(state: AgentStatusState): state is ActivityEventState {
@@ -554,6 +590,7 @@ export function buildAgentPaneThreads(args: {
         agentType: event.agentType,
         currentAgentState: null,
         currentAgentEntry: null,
+        responsePreview: responsePreviewForEntry(event.entry),
         latestTimestamp: event.timestamp,
         latestEvent: event,
         events: [event],
@@ -568,6 +605,7 @@ export function buildAgentPaneThreads(args: {
       existing.paneTitle = paneTitleForEvent(event)
       existing.agentType = event.agentType
       existing.tab = event.tab
+      existing.responsePreview = responsePreviewForEntry(event.entry)
       existing.latestTimestamp = event.timestamp
     }
   }
@@ -584,6 +622,7 @@ export function buildAgentPaneThreads(args: {
         agentType: liveAgent.agentType,
         currentAgentState: liveAgent.state,
         currentAgentEntry: liveAgent.entry,
+        responsePreview: responsePreviewForEntry(liveAgent.entry),
         latestTimestamp: liveAgent.timestamp,
         latestEvent: null,
         events: [],
@@ -601,6 +640,7 @@ export function buildAgentPaneThreads(args: {
     existing.agentType = liveAgent.agentType
     existing.currentAgentState = liveAgent.state
     existing.currentAgentEntry = liveAgent.entry
+    existing.responsePreview = responsePreviewForEntry(liveAgent.entry)
     existing.latestTimestamp = liveAgent.timestamp
   }
 
@@ -667,7 +707,7 @@ function threadSearchText(thread: AgentPaneThread): string {
   const latestEventText = latest
     ? `${agentTitle(latest)} ${agentSummary(latest)} ${agentMeta(latest)}`
     : ''
-  return `${thread.paneTitle} ${thread.worktree.displayName} ${thread.repo?.displayName ?? ''} ${formatAgentTypeLabel(thread.agentType)} ${stateLabel} ${currentPrompt} ${currentSummary} ${latestEventText}`.toLowerCase()
+  return `${thread.paneTitle} ${thread.worktree.displayName} ${thread.repo?.displayName ?? ''} ${formatAgentTypeLabel(thread.agentType)} ${stateLabel} ${currentPrompt} ${currentSummary} ${thread.responsePreview} ${latestEventText}`.toLowerCase()
 }
 
 export function activityThreadMatchesSearchQuery({
@@ -698,19 +738,41 @@ function ThreadAgentStateIndicator({ thread }: { thread: AgentPaneThread }): Rea
   )
 }
 
+function isEventFromNestedInteractiveElement(
+  target: EventTarget | null,
+  currentTarget: HTMLElement
+): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false
+  }
+  const interactiveTarget = target.closest(
+    'a, button, input, select, textarea, [role="button"], [role="link"], [tabindex]:not([tabindex="-1"])'
+  )
+  return (
+    interactiveTarget instanceof HTMLElement &&
+    interactiveTarget !== currentTarget &&
+    currentTarget.contains(interactiveTarget)
+  )
+}
+
 function ThreadRow({
   thread,
   selected,
   onSelect,
   onJump,
-  onMarkUnread
+  onMarkUnread,
+  compactMode
 }: {
   thread: AgentPaneThread
   selected: boolean
   onSelect: () => void
   onJump: () => void
   onMarkUnread: () => void
+  compactMode: boolean
 }): React.JSX.Element {
+  const renderedResponsePreview = activityThreadResponseRenderPreview({
+    responsePreview: thread.responsePreview
+  })
   return (
     <div
       data-current={selected ? 'true' : undefined}
@@ -718,6 +780,11 @@ function ThreadRow({
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {
+        // Why: response markdown can contain links; keyboard activation on a
+        // nested link should follow the link instead of selecting the row.
+        if (isEventFromNestedInteractiveElement(event.target, event.currentTarget)) {
+          return
+        }
         if (event.key === 'Enter' || event.key === ' ') {
           event.preventDefault()
           onSelect()
@@ -757,14 +824,32 @@ function ThreadRow({
             <AgentIcon agent={agentTypeToIconAgent(thread.agentType)} size={14} />
           </span>
         </span>
-        <span
-          className={cn(
-            'line-clamp-3 min-w-0 flex-1 break-words text-xs leading-snug',
-            thread.unread ? 'font-semibold text-foreground' : 'font-medium text-foreground'
-          )}
-        >
-          {thread.paneTitle}
-        </span>
+        <div className="min-w-0 flex-1">
+          <span
+            className={cn(
+              'min-w-0 text-xs leading-snug',
+              compactMode ? 'block truncate' : 'line-clamp-3 break-words',
+              thread.unread ? 'font-semibold text-foreground' : 'font-medium text-foreground'
+            )}
+            title={compactMode ? thread.paneTitle : undefined}
+          >
+            {thread.paneTitle}
+          </span>
+          {!compactMode && renderedResponsePreview ? (
+            <CommentMarkdown
+              content={renderedResponsePreview}
+              className={cn(
+                // Why: mirror the in-workspace agent card's compact response
+                // preview while keeping Activity rows to one scannable line;
+                // the content is capped before markdown parsing to keep large
+                // assistant summaries cheap in long Activity lists.
+                'mt-1 h-[1lh] min-w-0 overflow-hidden truncate whitespace-nowrap text-[11px] font-normal leading-snug text-muted-foreground/80',
+                '[&_*]:inline [&_*]:!m-0 [&_*]:!p-0 [&_*]:!whitespace-nowrap [&_br]:hidden [&_ol]:list-none [&_ul]:list-none'
+              )}
+              title={thread.responsePreview}
+            />
+          ) : null}
+        </div>
         <span className="inline-flex shrink-0 items-center gap-1.5 pt-px">
           {/* Why (bell matches WorktreeCard pattern): unread → amber filled
               bell as a static, non-interactive cue (selecting the thread
@@ -850,6 +935,7 @@ function ThreadRow({
 export default function ActivityPrototypePage(): React.JSX.Element {
   const [readFilter, setReadFilter] = useState<ThreadReadFilter>('all')
   const [query, setQuery] = useState('')
+  const [compactMode, setCompactMode] = useState(false)
   const [selectedPaneKey, setSelectedPaneKey] = useState<string | null>(null)
   const [displayedPaneKey, setDisplayedPaneKey] = useState<string | null>(null)
   const [activePortalSlotId, setActivePortalSlotId] =
@@ -1200,6 +1286,14 @@ export default function ActivityPrototypePage(): React.JSX.Element {
                   <TooltipContent side="bottom">More options</TooltipContent>
                 </Tooltip>
                 <DropdownMenuContent align="end" sideOffset={6}>
+                  <DropdownMenuCheckboxItem
+                    checked={compactMode}
+                    onCheckedChange={(checked) => setCompactMode(checked === true)}
+                    onSelect={(event) => event.preventDefault()}
+                  >
+                    Compact mode
+                  </DropdownMenuCheckboxItem>
+                  <DropdownMenuSeparator />
                   <DropdownMenuItem
                     onSelect={() => markAllThreadsRead()}
                     disabled={!hasUnreadThreads}
@@ -1219,6 +1313,7 @@ export default function ActivityPrototypePage(): React.JSX.Element {
                 onSelect={() => selectThread(thread)}
                 onJump={() => jumpToWorkspace(thread)}
                 onMarkUnread={() => markThreadUnread(thread)}
+                compactMode={compactMode}
               />
             ))}
             {visibleThreads.length === 0 ? (

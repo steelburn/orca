@@ -153,7 +153,7 @@ const SidebarNav = React.memo(function SidebarNav() {
           className={cn('size-4 shrink-0', !activityActive && 'text-sidebar-foreground/30')}
           strokeWidth={activityActive ? 2.25 : 1.75}
         />
-        <span className="flex-1">Activity</span>
+        <span className="flex-1">Agents</span>
         {activityUnreadCount > 0 ? (
           <span className="rounded-full bg-primary px-1.5 py-px text-[10px] font-semibold text-primary-foreground">
             {activityUnreadCount}

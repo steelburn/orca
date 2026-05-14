@@ -158,7 +158,7 @@ test.describe('Terminal restart persistence', () => {
       if (firstApp) {
         await session.close(firstApp)
       }
-      session.dispose()
+      await session.dispose()
     }
   })
 
@@ -223,7 +223,7 @@ test.describe('Terminal restart persistence', () => {
       if (firstApp) {
         await session.close(firstApp)
       }
-      session.dispose()
+      await session.dispose()
     }
   })
 
@@ -271,7 +271,7 @@ test.describe('Terminal restart persistence', () => {
       if (app) {
         await session.close(app)
       }
-      session.dispose()
+      await session.dispose()
     }
   })
 })
