@@ -19,6 +19,11 @@ import { execSync } from 'child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'fs'
 import os from 'os'
 import path from 'path'
+import {
+  closeElectronApp,
+  forceKillProcessTreeSnapshot,
+  type ProcessTreeSnapshot
+} from './electron-process-tree'
 
 type LaunchedOrca = {
   app: ElectronApplication
@@ -60,6 +65,7 @@ export function createRestartSession(testInfo: TestInfo): RestartSession {
   const mainPath = path.join(process.cwd(), 'out', 'main', 'index.js')
   const userDataDir = mkdtempSync(path.join(os.tmpdir(), 'orca-e2e-restart-'))
   const headful = shouldLaunchHeadful(testInfo)
+  const processSnapshots: ProcessTreeSnapshot[] = []
 
   // Why: this helper bypasses the shared `electronApp` fixture, so it must
   // seed the same dismissed onboarding state or the full-screen overlay covers
@@ -98,29 +104,18 @@ export function createRestartSession(testInfo: TestInfo): RestartSession {
   }
 
   const close = async (app: ElectronApplication): Promise<void> => {
-    // Why: mirror the shared fixture's shutdown race — give Electron 10s to run
-    // before-quit/will-quit (which drives the beforeunload → session.setSync
-    // flush this suite relies on) and only then fall back to SIGKILL.
-    const proc = app.process()
-    try {
-      await Promise.race([
-        app.close(),
-        new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('Timed out closing Electron app')), 10_000)
-        })
-      ])
-    } catch {
-      if (proc) {
-        try {
-          proc.kill('SIGKILL')
-        } catch {
-          /* already dead */
-        }
-      }
+    // Why: restart specs need daemon children to survive the first close so the
+    // second launch can warm-reattach. Keep snapshots and reap them at dispose.
+    const snapshot = await closeElectronApp(app)
+    if (snapshot) {
+      processSnapshots.push(snapshot)
     }
   }
 
   const dispose = (): void => {
+    for (const snapshot of processSnapshots.reverse()) {
+      forceKillProcessTreeSnapshot(snapshot)
+    }
     if (existsSync(userDataDir)) {
       rmSync(userDataDir, { recursive: true, force: true })
     }
