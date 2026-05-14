@@ -2,18 +2,9 @@
 for login, credential capture, Keychain storage, selection, and rate-limit refresh. */
 import { randomUUID } from 'node:crypto'
 import { spawn } from 'node:child_process'
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  rmSync,
-  writeFileSync
-} from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative, resolve, sep } from 'node:path'
-import { app } from 'electron'
 import type {
   ClaudeManagedAccount,
   ClaudeManagedAccountSummary,
@@ -21,9 +12,14 @@ import type {
 } from '../../shared/types'
 import type { Store } from '../persistence'
 import type { RateLimitService } from '../rate-limits/service'
-import { writeFileAtomically } from '../codex-accounts/fs-utils'
 import { resolveClaudeCommand } from '../codex-cli/command'
 import type { ClaudeRuntimeAuthService } from './runtime-auth-service'
+import {
+  getClaudeManagedAccountsRoot,
+  readClaudeManagedAuthFile,
+  resolveOwnedClaudeManagedAuthPath,
+  writeClaudeManagedAuthFile
+} from './managed-auth-path'
 import {
   deleteActiveClaudeKeychainCredentialsStrict,
   deleteManagedClaudeKeychainCredentials,
@@ -136,7 +132,7 @@ export class ClaudeAccountService {
 
   private async doReauthenticateAccount(accountId: string): Promise<ClaudeRateLimitAccountsState> {
     const account = this.requireAccount(accountId)
-    const managedAuthPath = this.assertManagedAuthPath(account.managedAuthPath)
+    const managedAuthPath = this.assertManagedAuthPath(account.managedAuthPath, accountId)
     const previousSettings = this.store.getSettings()
     const previousManagedAuth = await this.readManagedAuthSnapshot(accountId, managedAuthPath)
     const captured = await this.runClaudeLoginAndCapture()
@@ -160,11 +156,12 @@ export class ClaudeAccountService {
     )
     let wroteManagedCredentials = false
     try {
-      await this.writeManagedOauthAccount(managedAuthPath, captured.oauthAccount)
+      await this.writeManagedOauthAccount(accountId, managedAuthPath, captured.oauthAccount)
       await this.writeManagedCredentials(accountId, managedAuthPath, captured.credentialsJson)
       wroteManagedCredentials = true
       this.store.updateSettings({ claudeManagedAccounts: reauthenticatedAccounts })
       this.runtimeAuth.clearLastWrittenCredentialsJson(accountId)
+      this.rateLimits.evictInactiveClaudeCache(accountId)
       await this.syncRuntimeAuthWithLivePtyGate()
       await this.rateLimits.refreshForClaudeAccountChange()
       return this.getSnapshot()
@@ -185,7 +182,7 @@ export class ClaudeAccountService {
       }
       if (restoredManagedCredentials || !wroteManagedCredentials) {
         try {
-          this.restoreManagedOauthSnapshot(managedAuthPath, previousManagedAuth)
+          this.restoreManagedOauthSnapshot(accountId, managedAuthPath, previousManagedAuth)
         } catch (rollbackError) {
           console.warn(
             '[claude-accounts] Failed to restore managed oauth metadata during rollback:',
@@ -228,11 +225,7 @@ export class ClaudeAccountService {
       }
       await this.safeRemoveManagedAuth(accountId, account.managedAuthPath)
       this.rateLimits.evictInactiveClaudeCache(accountId)
-      await this.rateLimits.refreshForClaudeAccountChange(
-        settings.activeClaudeManagedAccountId === accountId
-          ? settings.activeClaudeManagedAccountId
-          : undefined
-      )
+      await this.rateLimits.refreshForClaudeAccountChange()
       return this.getSnapshot()
     } catch (error) {
       this.restoreClaudeSettings(settings)
@@ -452,7 +445,7 @@ export class ClaudeAccountService {
     captured: CapturedClaudeAuth
   ): Promise<void> {
     await this.writeManagedCredentials(accountId, managedAuthPath, captured.credentialsJson)
-    await this.writeManagedOauthAccount(managedAuthPath, captured.oauthAccount)
+    await this.writeManagedOauthAccount(accountId, managedAuthPath, captured.oauthAccount)
   }
 
   private async writeManagedCredentials(
@@ -460,25 +453,24 @@ export class ClaudeAccountService {
     managedAuthPath: string,
     credentialsJson: string
   ): Promise<void> {
-    const trustedPath = this.assertManagedAuthPath(managedAuthPath)
+    const trustedPath = this.assertManagedAuthPath(managedAuthPath, accountId)
     if (process.platform === 'darwin') {
       await writeManagedClaudeKeychainCredentials(accountId, credentialsJson)
     } else {
-      writeFileAtomically(join(trustedPath, '.credentials.json'), credentialsJson, {
-        mode: 0o600
-      })
+      writeClaudeManagedAuthFile(trustedPath, '.credentials.json', credentialsJson)
     }
   }
 
   private async writeManagedOauthAccount(
+    accountId: string,
     managedAuthPath: string,
     oauthAccount: unknown
   ): Promise<void> {
-    const trustedPath = this.assertManagedAuthPath(managedAuthPath)
-    writeFileAtomically(
-      join(trustedPath, 'oauth-account.json'),
-      `${JSON.stringify(oauthAccount, null, 2)}\n`,
-      { mode: 0o600 }
+    const trustedPath = this.assertManagedAuthPath(managedAuthPath, accountId)
+    writeClaudeManagedAuthFile(
+      trustedPath,
+      'oauth-account.json',
+      `${JSON.stringify(oauthAccount, null, 2)}\n`
     )
   }
 
@@ -486,17 +478,13 @@ export class ClaudeAccountService {
     accountId: string,
     managedAuthPath: string
   ): Promise<ManagedClaudeAuthSnapshot> {
-    const trustedPath = this.assertManagedAuthPath(managedAuthPath)
-    const credentialsPath = join(trustedPath, '.credentials.json')
-    const oauthPath = join(trustedPath, 'oauth-account.json')
+    const trustedPath = this.assertManagedAuthPath(managedAuthPath, accountId)
     return {
       credentialsJson:
         process.platform === 'darwin'
           ? await readManagedClaudeKeychainCredentials(accountId)
-          : existsSync(credentialsPath)
-            ? readFileSync(credentialsPath, 'utf-8')
-            : null,
-      oauthAccountJson: existsSync(oauthPath) ? readFileSync(oauthPath, 'utf-8') : null
+          : readClaudeManagedAuthFile(trustedPath, '.credentials.json'),
+      oauthAccountJson: readClaudeManagedAuthFile(trustedPath, 'oauth-account.json')
     }
   }
 
@@ -505,27 +493,28 @@ export class ClaudeAccountService {
     managedAuthPath: string,
     snapshot: ManagedClaudeAuthSnapshot
   ): Promise<void> {
-    const trustedPath = this.assertManagedAuthPath(managedAuthPath)
+    const trustedPath = this.assertManagedAuthPath(managedAuthPath, accountId)
     const credentialsPath = join(trustedPath, '.credentials.json')
     if (process.platform === 'darwin') {
       await (snapshot.credentialsJson !== null
         ? writeManagedClaudeKeychainCredentials(accountId, snapshot.credentialsJson)
         : deleteManagedClaudeKeychainCredentials(accountId))
     } else if (snapshot.credentialsJson !== null) {
-      writeFileAtomically(credentialsPath, snapshot.credentialsJson, { mode: 0o600 })
+      writeClaudeManagedAuthFile(trustedPath, '.credentials.json', snapshot.credentialsJson)
     } else {
       rmSync(credentialsPath, { force: true })
     }
   }
 
   private restoreManagedOauthSnapshot(
+    accountId: string,
     managedAuthPath: string,
     snapshot: ManagedClaudeAuthSnapshot
   ): void {
-    const trustedPath = this.assertManagedAuthPath(managedAuthPath)
+    const trustedPath = this.assertManagedAuthPath(managedAuthPath, accountId)
     const oauthPath = join(trustedPath, 'oauth-account.json')
     if (snapshot.oauthAccountJson !== null) {
-      writeFileAtomically(oauthPath, snapshot.oauthAccountJson, { mode: 0o600 })
+      writeClaudeManagedAuthFile(trustedPath, 'oauth-account.json', snapshot.oauthAccountJson)
     } else {
       rmSync(oauthPath, { force: true })
     }
@@ -535,44 +524,40 @@ export class ClaudeAccountService {
     const managedAuthPath = join(this.getManagedAccountsRoot(), accountId, 'auth')
     mkdirSync(managedAuthPath, { recursive: true })
     writeFileSync(join(managedAuthPath, '.orca-managed-claude-auth'), `${accountId}\n`, 'utf-8')
-    return this.assertManagedAuthPath(managedAuthPath)
+    return this.assertManagedAuthPath(managedAuthPath, accountId)
   }
 
   private getManagedAccountsRoot(): string {
-    const root = join(app.getPath('userData'), 'claude-accounts')
+    const root = getClaudeManagedAccountsRoot()
     mkdirSync(root, { recursive: true })
     return root
   }
 
-  private assertManagedAuthPath(candidatePath: string): string {
-    const rootPath = this.getManagedAccountsRoot()
-    const resolvedCandidate = resolve(candidatePath)
-    const resolvedRoot = resolve(rootPath)
-    if (!existsSync(resolvedCandidate)) {
+  private assertManagedAuthPath(candidatePath: string, expectedAccountId?: string): string {
+    this.getManagedAccountsRoot()
+    const accountId = expectedAccountId ?? this.readManagedAuthAccountIdFromPath(candidatePath)
+    if (!accountId || (expectedAccountId && accountId !== expectedAccountId)) {
       throw new Error('Managed Claude auth directory does not exist on disk.')
     }
-    const canonicalCandidate = realpathSync(resolvedCandidate)
-    const canonicalRoot = realpathSync(resolvedRoot)
-    if (
-      canonicalCandidate !== canonicalRoot &&
-      !canonicalCandidate.startsWith(canonicalRoot + sep)
-    ) {
-      throw new Error(
-        `Managed Claude auth is outside current storage root (expected under ${canonicalRoot}).`
-      )
-    }
-    const relativePath = relative(canonicalRoot, canonicalCandidate)
-    const escaped =
-      relativePath === '' || relativePath.startsWith('..') || relativePath.includes(`..${sep}`)
-    if (escaped || !existsSync(join(canonicalCandidate, '.orca-managed-claude-auth'))) {
+    const trustedPath = resolveOwnedClaudeManagedAuthPath(accountId, candidatePath, {
+      adoptLegacyMarker: true
+    })
+    if (!trustedPath) {
       throw new Error('Managed Claude auth storage is not owned by Orca.')
     }
-    return canonicalCandidate
+    return trustedPath
+  }
+
+  private readManagedAuthAccountIdFromPath(candidatePath: string): string | null {
+    const rootPath = this.getManagedAccountsRoot()
+    const relativePath = relative(resolve(rootPath), resolve(candidatePath))
+    const parts = relativePath.split(sep)
+    return parts.length === 2 && parts[1] === 'auth' ? parts[0] : null
   }
 
   private async safeRemoveManagedAuth(accountId: string, candidatePath: string): Promise<void> {
     try {
-      const managedAuthPath = this.assertManagedAuthPath(candidatePath)
+      const managedAuthPath = this.assertManagedAuthPath(candidatePath, accountId)
       rmSync(resolve(managedAuthPath, '..'), { recursive: true, force: true })
     } catch (error) {
       console.warn('[claude-accounts] Refusing to remove untrusted managed auth:', error)

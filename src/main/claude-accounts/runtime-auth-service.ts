@@ -8,6 +8,11 @@ import type { ClaudeManagedAccount } from '../../shared/types'
 import type { Store } from '../persistence'
 import { writeFileAtomically } from '../codex-accounts/fs-utils'
 import type { ClaudeEnvPatch } from './environment'
+import {
+  readClaudeManagedAuthFile,
+  resolveOwnedClaudeManagedAuthPath,
+  writeClaudeManagedAuthFile
+} from './managed-auth-path'
 import { ClaudeRuntimePathResolver } from './runtime-paths'
 import {
   deleteActiveClaudeKeychainCredentialsStrict,
@@ -64,6 +69,7 @@ export class ClaudeRuntimeAuthService {
   // an external login (e.g. `claude auth login`) overwrote it — so Orca adopts
   // the file as the new system default instead of restoring a stale snapshot.
   private lastWrittenCredentialsJson: string | null = null
+  private hasMaterializedRuntimeAuth = false
   private hasLastWrittenOauthAccount = false
   private lastWrittenOauthAccount: unknown = null
   private skipNextReadBackForAccountId: string | null = null
@@ -157,16 +163,38 @@ export class ClaudeRuntimeAuthService {
         this.store.updateSettings({ activeClaudeManagedAccountId: null })
       }
       if (this.lastSyncedAccountId !== null) {
-        if (previousAccount) {
-          await this.restoreSystemDefaultSnapshot(
-            previousManagedCredentialsJson,
-            previousManagedOauthAccount
-          )
-        } else {
-          this.clearLastWrittenRuntimeState()
-        }
+        await (previousAccount
+          ? this.restoreSystemDefaultSnapshot(
+              previousManagedCredentialsJson,
+              previousManagedOauthAccount
+            )
+          : this.restoreSystemDefaultSnapshot(this.lastWrittenCredentialsJson, undefined))
         this.lastSyncedAccountId = null
       }
+      return
+    }
+
+    if (!this.getOwnedManagedAuthPath(activeAccount)) {
+      console.warn(
+        '[claude-runtime-auth] Active managed account is not owned by Orca, restoring system default'
+      )
+      if (this.lastSyncedAccountId !== null) {
+        if (
+          previousAccount &&
+          (previousAccount.id !== activeAccount.id ||
+            this.hasMaterializedRuntimeAuth ||
+            this.runtimeOauthAccountMatches(this.readManagedOauthAccount(previousAccount)))
+        ) {
+          await this.restoreSystemDefaultSnapshotForMissingManagedCredentials(
+            previousAccount,
+            previousManagedOauthAccount
+          )
+        } else if (!previousAccount && this.hasMaterializedRuntimeAuth) {
+          await this.restoreSystemDefaultSnapshot(this.lastWrittenCredentialsJson, undefined)
+        }
+      }
+      this.store.updateSettings({ activeClaudeManagedAccountId: null })
+      this.lastSyncedAccountId = null
       return
     }
 
@@ -176,10 +204,19 @@ export class ClaudeRuntimeAuthService {
         '[claude-runtime-auth] Active managed account is missing or has invalid credentials, restoring system default'
       )
       if (this.lastSyncedAccountId !== null) {
-        await this.restoreSystemDefaultSnapshotForMissingManagedCredentials(
-          activeAccount,
-          this.readManagedOauthAccount(activeAccount)
-        )
+        if (
+          previousAccount &&
+          (previousAccount.id !== activeAccount.id ||
+            this.hasMaterializedRuntimeAuth ||
+            this.runtimeOauthAccountMatches(previousManagedOauthAccount))
+        ) {
+          await this.restoreSystemDefaultSnapshotForMissingManagedCredentials(
+            previousAccount,
+            previousManagedOauthAccount
+          )
+        } else if (!previousAccount && this.hasMaterializedRuntimeAuth) {
+          await this.restoreSystemDefaultSnapshot(this.lastWrittenCredentialsJson, undefined)
+        }
       }
       this.store.updateSettings({ activeClaudeManagedAccountId: null })
       this.lastSyncedAccountId = null
@@ -244,6 +281,7 @@ export class ClaudeRuntimeAuthService {
       this.hasLastWrittenOauthAccount = false
     }
     this.lastSyncedAccountId = activeAccount.id
+    this.hasMaterializedRuntimeAuth = true
   }
 
   // Why: called by ClaudeAccountService before syncForCurrentSelection() after
@@ -591,38 +629,48 @@ export class ClaudeRuntimeAuthService {
   }
 
   private async readManagedCredentials(account: ClaudeManagedAccount): Promise<string | null> {
+    const managedAuthPath = this.getOwnedManagedAuthPath(account)
+    if (!managedAuthPath) {
+      return null
+    }
     if (process.platform === 'darwin') {
       return readManagedClaudeKeychainCredentials(account.id)
     }
-    const credentialsPath = join(account.managedAuthPath, '.credentials.json')
-    if (!existsSync(credentialsPath)) {
-      return null
-    }
-    return readFileSync(credentialsPath, 'utf-8')
+    return readClaudeManagedAuthFile(managedAuthPath, '.credentials.json')
   }
 
   private async writeManagedCredentials(
     account: ClaudeManagedAccount,
     credentialsJson: string
   ): Promise<void> {
+    const managedAuthPath = this.getOwnedManagedAuthPath(account)
+    if (!managedAuthPath) {
+      throw new Error('Managed Claude auth storage is not owned by Orca.')
+    }
     if (process.platform === 'darwin') {
       await writeManagedClaudeKeychainCredentials(account.id, credentialsJson)
       return
     }
-    const credentialsPath = join(account.managedAuthPath, '.credentials.json')
-    writeFileAtomically(credentialsPath, credentialsJson, { mode: 0o600 })
+    writeClaudeManagedAuthFile(managedAuthPath, '.credentials.json', credentialsJson)
   }
 
   private readManagedOauthAccount(account: ClaudeManagedAccount): unknown {
-    const oauthPath = join(account.managedAuthPath, 'oauth-account.json')
-    if (!existsSync(oauthPath)) {
+    const managedAuthPath = this.getOwnedManagedAuthPath(account)
+    if (!managedAuthPath) {
       return null
     }
     try {
-      return JSON.parse(readFileSync(oauthPath, 'utf-8')) as unknown
+      const contents = readClaudeManagedAuthFile(managedAuthPath, 'oauth-account.json')
+      return contents ? (JSON.parse(contents) as unknown) : null
     } catch {
       return null
     }
+  }
+
+  private getOwnedManagedAuthPath(account: ClaudeManagedAccount): string | null {
+    return resolveOwnedClaudeManagedAuthPath(account.id, account.managedAuthPath, {
+      adoptLegacyMarker: true
+    })
   }
 
   private async captureSystemDefaultSnapshotForManagedEntry(
@@ -778,6 +826,7 @@ export class ClaudeRuntimeAuthService {
     this.lastWrittenCredentialsJson = null
     this.lastWrittenOauthAccount = null
     this.hasLastWrittenOauthAccount = false
+    this.hasMaterializedRuntimeAuth = false
   }
 
   private getOwnedRuntimeOauthBaseline(
@@ -951,6 +1000,7 @@ export class ClaudeRuntimeAuthService {
     this.lastWrittenCredentialsJson = null
     this.lastWrittenOauthAccount = null
     this.hasLastWrittenOauthAccount = false
+    this.hasMaterializedRuntimeAuth = false
   }
 
   private hasUnchangedRuntimeCredentials(previouslyWrittenCredentialsJson: string | null): boolean {
@@ -1052,6 +1102,17 @@ export class ClaudeRuntimeAuthService {
     } catch {
       return RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR
     }
+  }
+
+  private runtimeOauthAccountMatches(managedOauthAccount: unknown): boolean {
+    if (managedOauthAccount === null || managedOauthAccount === undefined) {
+      return false
+    }
+    const currentOauthAccount = this.readRuntimeOauthAccount()
+    if (currentOauthAccount === RUNTIME_OAUTH_ACCOUNT_PARSE_ERROR) {
+      return false
+    }
+    return this.jsonValuesEqual(currentOauthAccount, managedOauthAccount)
   }
 
   private writeRuntimeOauthAccount(oauthAccount: unknown): boolean {

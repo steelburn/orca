@@ -10,6 +10,10 @@ import {
   readActiveClaudeKeychainCredentialsStrict,
   readManagedClaudeKeychainCredentials
 } from '../claude-accounts/keychain'
+import {
+  readClaudeManagedAuthFile,
+  resolveOwnedClaudeManagedAuthPath
+} from '../claude-accounts/managed-auth-path'
 
 const OAUTH_USAGE_URL = 'https://api.anthropic.com/api/oauth/usage'
 const OAUTH_BETA_HEADER = 'oauth-2025-04-20'
@@ -351,6 +355,12 @@ export type InactiveClaudeAccountInfo = {
 // Using ClaudeRuntimeAuthService would overwrite the active account's auth.
 async function readManagedOAuthToken(account: InactiveClaudeAccountInfo): Promise<string | null> {
   try {
+    const managedAuthPath = resolveOwnedClaudeManagedAuthPath(account.id, account.managedAuthPath, {
+      adoptLegacyMarker: true
+    })
+    if (!managedAuthPath) {
+      return null
+    }
     if (process.platform === 'darwin') {
       const raw = await readManagedClaudeKeychainCredentials(account.id)
       if (raw) {
@@ -358,7 +368,8 @@ async function readManagedOAuthToken(account: InactiveClaudeAccountInfo): Promis
       }
       return null
     }
-    return (await readFromCredentialsFile(account.managedAuthPath)).token
+    const raw = readClaudeManagedAuthFile(managedAuthPath, '.credentials.json')
+    return raw ? parseOAuthCredentialsJson(raw).token : null
   } catch {
     return null
   }
