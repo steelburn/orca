@@ -129,7 +129,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
   describe('shutdown', () => {
     it('kills the session', async () => {
       const { id } = await adapter.spawn({ cols: 80, rows: 24 })
-      await adapter.shutdown(id, false)
+      await adapter.shutdown(id, { immediate: false })
       expect(lastSubprocess.kill).toHaveBeenCalled()
     })
   })
@@ -312,7 +312,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     it('prevents spawn after shutdown for same sessionId', async () => {
       const sessionId = 'tombstone-test'
       await adapter.spawn({ cols: 80, rows: 24, sessionId })
-      await adapter.shutdown(sessionId, true)
+      await adapter.shutdown(sessionId, { immediate: true })
 
       await expect(adapter.spawn({ cols: 80, rows: 24, sessionId })).rejects.toThrow(
         'was explicitly killed'
@@ -321,7 +321,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
     it('allows spawn for different sessionId after shutdown', async () => {
       await adapter.spawn({ cols: 80, rows: 24, sessionId: 'kill-me' })
-      await adapter.shutdown('kill-me', true)
+      await adapter.shutdown('kill-me', { immediate: true })
 
       const result = await adapter.spawn({ cols: 80, rows: 24, sessionId: 'fresh-one' })
       expect(result.id).toBe('fresh-one')
@@ -330,7 +330,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
     it('clearTombstone allows re-spawn', async () => {
       const sessionId = 'cleared-tombstone'
       await adapter.spawn({ cols: 80, rows: 24, sessionId })
-      await adapter.shutdown(sessionId, true)
+      await adapter.shutdown(sessionId, { immediate: true })
 
       adapter.clearTombstone(sessionId)
 
@@ -349,7 +349,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
         const id = `evict-${i}`
         ids.push(id)
         await adapter.spawn({ cols: 80, rows: 24, sessionId: id })
-        await adapter.shutdown(id, true)
+        await adapter.shutdown(id, { immediate: true })
       }
 
       // All 5 should be tombstoned
@@ -362,7 +362,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       // clearTombstone the first one, then re-kill it — it should still work
       adapter.clearTombstone(ids[0])
       await adapter.spawn({ cols: 80, rows: 24, sessionId: ids[0] })
-      await adapter.shutdown(ids[0], true)
+      await adapter.shutdown(ids[0], { immediate: true })
 
       // First tombstone was re-added at the end of the Map, so eviction
       // order is now [evict-1, evict-2, evict-3, evict-4, evict-0]
@@ -374,28 +374,32 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
   describe('reconcileOnStartup', () => {
     it('returns alive sessions for valid worktrees', async () => {
-      await adapter.spawn({ cols: 80, rows: 24, worktreeId: 'wt-active' })
+      const wt = 'repo-a::/wt/active'
+      await adapter.spawn({ cols: 80, rows: 24, worktreeId: wt })
 
-      const { alive, killed } = await adapter.reconcileOnStartup(new Set(['wt-active']))
+      const { alive, killed } = await adapter.reconcileOnStartup(new Set([wt]))
       expect(alive).toHaveLength(1)
-      expect(alive[0]).toContain('wt-active')
+      expect(alive[0]).toContain(wt)
       expect(killed).toHaveLength(0)
     })
 
     it('kills sessions for removed worktrees', async () => {
-      await adapter.spawn({ cols: 80, rows: 24, worktreeId: 'wt-removed' })
+      const wt = 'repo-a::/wt/removed'
+      await adapter.spawn({ cols: 80, rows: 24, worktreeId: wt })
 
-      const { alive, killed } = await adapter.reconcileOnStartup(new Set(['wt-other']))
+      const { alive, killed } = await adapter.reconcileOnStartup(new Set(['repo-a::/wt/other']))
       expect(alive).toHaveLength(0)
       expect(killed).toHaveLength(1)
-      expect(killed[0]).toContain('wt-removed')
+      expect(killed[0]).toContain(wt)
     })
 
     it('handles mix of valid and orphaned sessions', async () => {
-      await adapter.spawn({ cols: 80, rows: 24, worktreeId: 'wt-keep' })
-      await adapter.spawn({ cols: 80, rows: 24, worktreeId: 'wt-delete' })
+      const keep = 'repo-a::/wt/keep'
+      const drop = 'repo-a::/wt/delete'
+      await adapter.spawn({ cols: 80, rows: 24, worktreeId: keep })
+      await adapter.spawn({ cols: 80, rows: 24, worktreeId: drop })
 
-      const { alive, killed } = await adapter.reconcileOnStartup(new Set(['wt-keep']))
+      const { alive, killed } = await adapter.reconcileOnStartup(new Set([keep]))
       expect(alive).toHaveLength(1)
       expect(killed).toHaveLength(1)
     })
@@ -407,6 +411,22 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
       const { alive, killed } = await adapter.reconcileOnStartup(new Set([complexId]))
       expect(alive).toHaveLength(1)
       expect(killed).toHaveLength(0)
+    })
+
+    it('kills sessions whose id does not match the minted format, even if id is in valid set', async () => {
+      // Why: parsePtySessionId rejects bare UUIDs (no `@@`) and ids without
+      // the `::` worktree shape. Such sessions can't be attributed to any
+      // current worktree and must be treated as orphans regardless of
+      // valid-set membership. Passing the bare-uuid as a member of
+      // validWorktreeIds proves the new strict parser short-circuits the
+      // membership check — under the old loose parser this session would
+      // have been kept.
+      const sessionId = 'bare-uuid-no-separators'
+      await adapter.spawn({ cols: 80, rows: 24, sessionId })
+
+      const { alive, killed } = await adapter.reconcileOnStartup(new Set([sessionId]))
+      expect(alive).toHaveLength(0)
+      expect(killed).toHaveLength(1)
     })
   })
 
@@ -488,7 +508,7 @@ describe('DaemonPtyAdapter (IPtyProvider)', () => {
 
       expect(existsSync(join(historyDir, getHistorySessionDirName(id)))).toBe(true)
 
-      await historyAdapter.shutdown(id, true)
+      await historyAdapter.shutdown(id, { immediate: true })
       await new Promise((r) => setTimeout(r, 50))
 
       expect(existsSync(join(historyDir, getHistorySessionDirName(id)))).toBe(false)

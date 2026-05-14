@@ -5,6 +5,8 @@ import type {
   GitDiffResult,
   GitBranchCompareResult,
   GitConflictOperation,
+  GitPushTarget,
+  GitUpstreamStatus,
   GitWorktreeInfo,
   SearchOptions,
   SearchResult
@@ -79,7 +81,7 @@ export type IPtyProvider = {
   attach(id: string): Promise<void>
   write(id: string, data: string): void
   resize(id: string, cols: number, rows: number): void
-  shutdown(id: string, immediate: boolean): Promise<void>
+  shutdown(id: string, opts: { immediate?: boolean; keepHistory?: boolean }): Promise<void>
   sendSignal(id: string, signal: string): Promise<void>
   getCwd(id: string): Promise<string>
   getInitialCwd(id: string): Promise<string>
@@ -132,6 +134,7 @@ export type IFilesystemProvider = {
 
 export type IGitProvider = {
   getStatus(worktreePath: string): Promise<GitStatusResult>
+  commit(worktreePath: string, message: string): Promise<{ success: boolean; error?: string }>
   getDiff(
     worktreePath: string,
     filePath: string,
@@ -145,6 +148,10 @@ export type IGitProvider = {
   discardChanges(worktreePath: string, filePath: string): Promise<void>
   detectConflictOperation(worktreePath: string): Promise<GitConflictOperation>
   getBranchCompare(worktreePath: string, baseRef: string): Promise<GitBranchCompareResult>
+  getUpstreamStatus(worktreePath: string): Promise<GitUpstreamStatus>
+  pushBranch(worktreePath: string, publish?: boolean, pushTarget?: GitPushTarget): Promise<void>
+  pullBranch(worktreePath: string): Promise<void>
+  fetchRemote(worktreePath: string): Promise<void>
   getBranchDiff(
     worktreePath: string,
     baseRef: string,
@@ -155,7 +162,7 @@ export type IGitProvider = {
     repoPath: string,
     branchName: string,
     targetDir: string,
-    options?: { base?: string; track?: boolean }
+    options?: { base?: string }
   ): Promise<void>
   removeWorktree(worktreePath: string, force?: boolean): Promise<void>
   isGitRepo(path: string): boolean

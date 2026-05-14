@@ -6,6 +6,8 @@ import type {
   GitDiffResult,
   GitBranchCompareResult,
   GitConflictOperation,
+  GitPushTarget,
+  GitUpstreamStatus,
   GitWorktreeInfo
 } from '../../shared/types'
 
@@ -24,6 +26,16 @@ export class SshGitProvider implements IGitProvider {
 
   async getStatus(worktreePath: string): Promise<GitStatusResult> {
     return (await this.mux.request('git.status', { worktreePath })) as GitStatusResult
+  }
+
+  async commit(
+    worktreePath: string,
+    message: string
+  ): Promise<{ success: boolean; error?: string }> {
+    return (await this.mux.request('git.commit', {
+      worktreePath,
+      message
+    })) as { success: boolean; error?: string }
   }
 
   async getDiff(
@@ -73,6 +85,28 @@ export class SshGitProvider implements IGitProvider {
     })) as GitBranchCompareResult
   }
 
+  async getUpstreamStatus(worktreePath: string): Promise<GitUpstreamStatus> {
+    return (await this.mux.request('git.upstreamStatus', {
+      worktreePath
+    })) as GitUpstreamStatus
+  }
+
+  async pushBranch(
+    worktreePath: string,
+    publish = false,
+    pushTarget?: GitPushTarget
+  ): Promise<void> {
+    await this.mux.request('git.push', { worktreePath, publish, pushTarget })
+  }
+
+  async pullBranch(worktreePath: string): Promise<void> {
+    await this.mux.request('git.pull', { worktreePath })
+  }
+
+  async fetchRemote(worktreePath: string): Promise<void> {
+    await this.mux.request('git.fetch', { worktreePath })
+  }
+
   async getBranchDiff(
     worktreePath: string,
     baseRef: string,
@@ -95,7 +129,7 @@ export class SshGitProvider implements IGitProvider {
     repoPath: string,
     branchName: string,
     targetDir: string,
-    options?: { base?: string; track?: boolean }
+    options?: { base?: string }
   ): Promise<void> {
     await this.mux.request('git.addWorktree', {
       repoPath,

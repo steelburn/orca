@@ -7,7 +7,8 @@ import { randomUUID } from 'node:crypto'
 import { shell, webContents } from 'electron'
 import {
   normalizeBrowserNavigationUrl,
-  normalizeExternalBrowserUrl
+  normalizeExternalBrowserUrl,
+  redactKagiSessionToken
 } from '../../shared/browser-url'
 import type {
   BrowserDownloadFinishedEvent,
@@ -55,6 +56,7 @@ export type BrowserGuestRegistration = {
   browserTabId?: string
   workspaceId?: string
   worktreeId?: string
+  sessionProfileId?: string | null
   webContentsId: number
   rendererWebContentsId: number
 }
@@ -97,6 +99,7 @@ export class BrowserManager {
   // visibility/focus state is keyed by browser workspace id. Screenshot prep
   // has to bridge that mismatch to activate the right tab before capture.
   private readonly workspaceIdByPageId = new Map<string, string>()
+  private readonly sessionProfileIdByPageId = new Map<string, string | null>()
   private readonly rendererWebContentsIdByTabId = new Map<string, number>()
   // Why: chain setViewportOverride calls per tab so rapid toggles don't
   // interleave CDP commands. Without serialization, two concurrent calls can
@@ -443,7 +446,10 @@ export class BrowserManager {
           action: 'opened-in-orca'
         })
       } else if (externalUrl) {
-        void shell.openExternal(externalUrl)
+        // Why: a target=_blank click on a Kagi search result page produces a
+        // popup URL that still contains the bearer token; redact before
+        // handing the URL to the OS default browser.
+        void shell.openExternal(redactKagiSessionToken(externalUrl))
         this.forwardOrQueuePopupEvent(guest.id, {
           origin: safeOrigin(externalUrl),
           action: 'opened-external'
@@ -543,6 +549,7 @@ export class BrowserManager {
     browserTabId: legacyBrowserTabId,
     workspaceId,
     worktreeId,
+    sessionProfileId,
     webContentsId,
     rendererWebContentsId
   }: BrowserGuestRegistration): void {
@@ -592,6 +599,7 @@ export class BrowserManager {
     if (workspaceId) {
       this.workspaceIdByPageId.set(browserTabId, workspaceId)
     }
+    this.sessionProfileIdByPageId.set(browserTabId, sessionProfileId ?? null)
     this.rendererWebContentsIdByTabId.set(browserTabId, rendererWebContentsId)
     if (worktreeId) {
       this.worktreeIdByTabId.set(browserTabId, worktreeId)
@@ -655,6 +663,7 @@ export class BrowserManager {
     this.webContentsIdByTabId.delete(browserTabId)
     this.rendererWebContentsIdByTabId.delete(browserTabId)
     this.workspaceIdByPageId.delete(browserTabId)
+    this.sessionProfileIdByPageId.delete(browserTabId)
     this.worktreeIdByTabId.delete(browserTabId)
     // Why: drop any pending viewport-op chain for this tab so the Map doesn't
     // retain a resolved promise keyed to a destroyed guest.
@@ -681,6 +690,7 @@ export class BrowserManager {
     this.policyCleanupByGuestId.clear()
     this.tabIdByWebContentsId.clear()
     this.worktreeIdByTabId.clear()
+    this.sessionProfileIdByPageId.clear()
     this.pendingLoadFailuresByGuestId.clear()
     this.pendingPermissionEventsByGuestId.clear()
     this.pendingPopupEventsByGuestId.clear()
@@ -697,6 +707,10 @@ export class BrowserManager {
 
   getWorktreeIdForTab(browserTabId: string): string | undefined {
     return this.worktreeIdByTabId.get(browserTabId)
+  }
+
+  getSessionProfileIdForTab(browserTabId: string): string | null {
+    return this.sessionProfileIdByPageId.get(browserTabId) ?? null
   }
 
   notifyPermissionDenied(args: {
@@ -1415,9 +1429,15 @@ export class BrowserManager {
       return
     }
 
+    // Why: redact Kagi session tokens before the validated URL is persisted
+    // by the renderer into BrowserPage.loadError (saved to disk via the
+    // workspace session writer).
     renderer.send('browser:guest-load-failed', {
       browserPageId: browserTabId,
-      loadError
+      loadError: {
+        ...loadError,
+        validatedUrl: redactKagiSessionToken(loadError.validatedUrl)
+      }
     })
   }
 

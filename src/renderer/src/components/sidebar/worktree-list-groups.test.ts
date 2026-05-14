@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { buildRows, getPRGroupKey } from './worktree-list-groups'
 import type { Repo, Worktree } from '../../../../shared/types'
@@ -90,5 +92,92 @@ describe('buildRows with pinned worktrees', () => {
     const allPinned = { ...unpinned1, isPinned: true }
     const rows = buildRows('none', [pinned, allPinned], repoMap, null, new Set())
     expect(rows.some((r) => r.type === 'header' && r.key === 'all')).toBe(false)
+  })
+
+  it('preserves repo display casing in group labels', () => {
+    const lowercaseRepo = { ...repo, displayName: 'c15t' }
+    const rows = buildRows('repo', [worktree], new Map([[repo.id, lowercaseRepo]]), null, new Set())
+
+    expect(rows[0]).toMatchObject({ type: 'header', label: 'c15t' })
+  })
+
+  it('groups folder-mode workspaces under their folder name', () => {
+    const folderRepo: Repo = {
+      ...repo,
+      id: 'folder-1',
+      path: '/tmp/design-assets',
+      displayName: 'design-assets',
+      kind: 'folder'
+    }
+    const folderWorktree: Worktree = {
+      ...worktree,
+      id: 'folder-1::/tmp/design-assets',
+      repoId: folderRepo.id,
+      path: folderRepo.path,
+      branch: '',
+      displayName: folderRepo.displayName,
+      isMainWorktree: true
+    }
+    const rows = buildRows(
+      'repo',
+      [folderWorktree],
+      new Map([[folderRepo.id, folderRepo]]),
+      null,
+      new Set()
+    )
+
+    expect(rows[0]).toMatchObject({
+      type: 'header',
+      key: 'repo:folder-1',
+      label: 'design-assets',
+      count: 1,
+      repo: folderRepo
+    })
+    expect(rows[1]).toMatchObject({ type: 'item', worktree: { id: folderWorktree.id } })
+  })
+})
+
+describe('buildRows repo grouping order', () => {
+  const repoA: Repo = { ...repo, id: 'repo-a', displayName: 'alpha' }
+  const repoB: Repo = { ...repo, id: 'repo-b', displayName: 'beta' }
+  const repoC: Repo = { ...repo, id: 'repo-c', displayName: 'gamma' }
+  const map = new Map([
+    [repoA.id, repoA],
+    [repoB.id, repoB],
+    [repoC.id, repoC]
+  ])
+  const wA: Worktree = { ...worktree, id: 'wt-a', repoId: repoA.id, displayName: 'a' }
+  const wB: Worktree = { ...worktree, id: 'wt-b', repoId: repoB.id, displayName: 'b' }
+  const wC: Worktree = { ...worktree, id: 'wt-c', repoId: repoC.id, displayName: 'c' }
+
+  it('orders repo headers by explicit repoOrder, not first-encounter', () => {
+    // Worktree stream encounters in order C, A, B — but repoOrder says B, A, C.
+    const repoOrder = new Map([
+      [repoB.id, 0],
+      [repoA.id, 1],
+      [repoC.id, 2]
+    ])
+    const rows = buildRows('repo', [wC, wA, wB], map, null, new Set(), repoOrder)
+    const headerKeys = rows.filter((r) => r.type === 'header').map((r) => r.key)
+    expect(headerKeys).toEqual(['repo:repo-b', 'repo:repo-a', 'repo:repo-c'])
+  })
+
+  it('places unknown repo ids last and sorts them by label', () => {
+    // Only repoB is in repoOrder; repoA and repoC fall through to label sort.
+    const repoOrder = new Map([[repoB.id, 0]])
+    const rows = buildRows('repo', [wC, wA, wB], map, null, new Set(), repoOrder)
+    const headerKeys = rows.filter((r) => r.type === 'header').map((r) => r.key)
+    expect(headerKeys).toEqual(['repo:repo-b', 'repo:repo-a', 'repo:repo-c'])
+  })
+})
+
+describe('WorktreeList header styles', () => {
+  it('does not title-case workspace group labels', () => {
+    const source = readFileSync(
+      fileURLToPath(new URL('./WorktreeList.tsx', import.meta.url)),
+      'utf8'
+    )
+
+    expect(source).not.toContain('leading-none capitalize')
   })
 })

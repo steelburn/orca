@@ -10,10 +10,11 @@ export type WindowShortcutInput = {
 export type WindowShortcutAction =
   | { type: 'zoom'; direction: 'in' | 'out' | 'reset' }
   | { type: 'toggleWorktreePalette' }
+  | { type: 'toggleFloatingTerminal' }
   | { type: 'toggleLeftSidebar' }
   | { type: 'toggleRightSidebar' }
   | { type: 'openQuickOpen' }
-  | { type: 'openNewWorkspace'; tab: 'quick' | 'create-from' }
+  | { type: 'openNewWorkspace' }
   | { type: 'jumpToWorktreeIndex'; index: number }
   | { type: 'worktreeHistoryNavigate'; direction: 'back' | 'forward' }
 
@@ -65,6 +66,16 @@ function isHistoryNavigateChord(input: WindowShortcutInput, platform: NodeJS.Pla
     Boolean(input.alt) &&
     !input.shift &&
     (input.code === 'ArrowLeft' || input.code === 'ArrowRight')
+  )
+}
+
+function isFloatingTerminalChord(input: WindowShortcutInput, platform: NodeJS.Platform): boolean {
+  return (
+    platformPrimaryModifier(input, platform) &&
+    !platformOppositeModifier(input, platform) &&
+    Boolean(input.alt) &&
+    !input.shift &&
+    matchesLetterShortcut(input, 't', 'KeyT')
   )
 }
 
@@ -124,6 +135,10 @@ export function resolveWindowShortcutAction(
     }
   }
 
+  if (isFloatingTerminalChord(input, platform)) {
+    return { type: 'toggleFloatingTerminal' }
+  }
+
   if (!isWindowShortcutModifierChord(input, platform)) {
     return null
   }
@@ -167,12 +182,11 @@ export function resolveWindowShortcutAction(
   // main process so it reaches the renderer even when focus lives inside
   // a contentEditable surface (markdown rich editor) or a browser guest
   // webContents, both of which bypass the renderer's window-level keydown.
-  // Cmd/Ctrl+Shift+N opens the composer on the "Create from…" tab so users
-  // can start a workspace directly from an existing PR, issue, branch, or
-  // Linear ticket without going through the quick-create flow first.
+  // Shift is accepted for compatibility with the former Create-from shortcut;
+  // the unified composer now exposes source switching inside the name field.
   if (matchesLetterShortcut(input, 'n', 'KeyN')) {
     if (!input.alt) {
-      return { type: 'openNewWorkspace', tab: input.shift ? 'create-from' : 'quick' }
+      return { type: 'openNewWorkspace' }
     }
   }
 

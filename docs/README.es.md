@@ -31,7 +31,7 @@
 Orca es compatible con cualquier agente CLI (*no solo los de esta lista*).
 
 <p>
-  <a href="https://docs.anthropic.com/claude/docs/claude-code"><kbd><img src="https://www.google.com/s2/favicons?domain=anthropic.com&sz=64" width="16" valign="middle" /> Claude Code</kbd></a> &nbsp;
+  <a href="https://docs.anthropic.com/claude/docs/claude-code"><kbd><img src="assets/claude-logo.svg" width="16" valign="middle" /> Claude Code</kbd></a> &nbsp;
   <a href="https://github.com/openai/codex"><kbd><img src="https://www.google.com/s2/favicons?domain=openai.com&sz=64" width="16" valign="middle" /> Codex</kbd></a> &nbsp;
   <a href="https://github.com/google-gemini/gemini-cli"><kbd><img src="https://www.google.com/s2/favicons?domain=gemini.google.com&sz=64" width="16" valign="middle" /> Gemini</kbd></a> &nbsp;
   <a href="https://pi.dev"><kbd><img src="https://pi.dev/favicon.svg" width="16" valign="middle" /> Pi</kbd></a> &nbsp;
@@ -40,15 +40,16 @@ Orca es compatible con cualquier agente CLI (*no solo los de esta lista*).
   <a href="https://block.github.io/goose/docs/quickstart/"><kbd><img src="https://www.google.com/s2/favicons?domain=goose-docs.ai&sz=64" width="16" valign="middle" /> Goose</kbd></a> &nbsp;
   <a href="https://ampcode.com/manual#install"><kbd><img src="https://www.google.com/s2/favicons?domain=ampcode.com&sz=64" width="16" valign="middle" /> Amp</kbd></a> &nbsp;
   <a href="https://docs.augmentcode.com/cli/overview"><kbd><img src="https://www.google.com/s2/favicons?domain=augmentcode.com&sz=64" width="16" valign="middle" /> Auggie</kbd></a> &nbsp;
+  <a href="https://github.com/autohandai/code-cli"><kbd><img src="https://www.google.com/s2/favicons?domain=autohand.ai&sz=64" width="16" valign="middle" /> Autohand Code</kbd></a> &nbsp;
   <a href="https://github.com/charmbracelet/crush"><kbd><img src="https://www.google.com/s2/favicons?domain=charm.sh&sz=64" width="16" valign="middle" /> Charm</kbd></a> &nbsp;
   <a href="https://docs.cline.bot/cline-cli/overview"><kbd><img src="https://www.google.com/s2/favicons?domain=cline.bot&sz=64" width="16" valign="middle" /> Cline</kbd></a> &nbsp;
   <a href="https://www.codebuff.com/docs/help/quick-start"><kbd><img src="https://www.google.com/s2/favicons?domain=codebuff.com&sz=64" width="16" valign="middle" /> Codebuff</kbd></a> &nbsp;
   <a href="https://docs.continue.dev/guides/cli"><kbd><img src="https://www.google.com/s2/favicons?domain=continue.dev&sz=64" width="16" valign="middle" /> Continue</kbd></a> &nbsp;
   <a href="https://cursor.com/cli"><kbd><img src="https://www.google.com/s2/favicons?domain=cursor.com&sz=64" width="16" valign="middle" /> Cursor</kbd></a> &nbsp;
-  <a href="https://docs.factory.ai/cli/getting-started/quickstart"><kbd><img src="https://www.google.com/s2/favicons?domain=factory.ai&sz=64" width="16" valign="middle" /> Droid</kbd></a> &nbsp;
+  <a href="https://docs.factory.ai/cli/getting-started/quickstart"><kbd><img src="assets/droid-logo.svg" width="16" valign="middle" /> Droid</kbd></a> &nbsp;
   <a href="https://docs.github.com/en/copilot/how-tos/set-up/install-copilot-cli"><kbd><img src="https://www.google.com/s2/favicons?domain=github.com&sz=64" width="16" valign="middle" /> GitHub Copilot</kbd></a> &nbsp;
   <a href="https://kilo.ai/docs/cli"><kbd><img src="https://raw.githubusercontent.com/Kilo-Org/kilocode/main/packages/kilo-vscode/assets/icons/kilo-light.svg" width="16" valign="middle" /> Kilocode</kbd></a> &nbsp;
-  <a href="https://www.kimi.com/code/docs/en/kimi-cli/guides/getting-started.html"><kbd><img src="https://www.google.com/s2/favicons?domain=moonshot.cn&sz=64" width="16" valign="middle" /> Kimi</kbd></a> &nbsp;
+  <a href="https://www.kimi.com/code/docs/en/kimi-code-cli/getting-started.html"><kbd><img src="https://www.google.com/s2/favicons?domain=moonshot.cn&sz=64" width="16" valign="middle" /> Kimi</kbd></a> &nbsp;
   <a href="https://kiro.dev/docs/cli/"><kbd><img src="https://www.google.com/s2/favicons?domain=kiro.dev&sz=64" width="16" valign="middle" /> Kiro</kbd></a> &nbsp;
   <a href="https://github.com/mistralai/mistral-vibe"><kbd><img src="https://www.google.com/s2/favicons?domain=mistral.ai&sz=64" width="16" valign="middle" /> Mistral Vibe</kbd></a> &nbsp;
   <a href="https://github.com/QwenLM/qwen-code"><kbd><img src="https://www.google.com/s2/favicons?domain=qwenlm.github.io&sz=64" width="16" valign="middle" /> Qwen Code</kbd></a> &nbsp;
@@ -96,51 +97,24 @@ yay -S stably-orca-git
 
 ---
 
-## [Nuevo] Anotar diff de IA
+## Showcase de funciones
 
-**Comenta directamente sobre los diffs generados por IA.**
-
-Anota cualquier línea de un diff generado por IA con tus comentarios y mándalo de vuelta al agente para que lo corrija. Mantén el ciclo de revisión bien ajustado — sin copiar números de línea, sin cambiar de contexto.
+Haz clic en cualquier tarjeta para explorar el flujo de trabajo.
 
 <p align="center">
-  <img src="assets/annotate-ai-diff.gif" alt="Orca Anotar diff de IA — comenta en diffs generados por IA y envía feedback al agente" width="800" />
+  <a href="https://www.onorca.dev/docs/model/worktrees"><kbd><strong>Worktrees en paralelo</strong><br/><br/><picture><source srcset="assets/feature-wall/parallel-worktrees.gif" type="image/gif"><img src="assets/feature-wall/parallel-worktrees.jpg" alt="Orquestación de worktrees en paralelo" width="390" /></picture><br/></kbd></a> &nbsp;&nbsp;
+  <a href="https://www.onorca.dev/docs/terminal"><kbd><strong>Terminales divididas</strong><br/><br/><picture><source srcset="assets/feature-wall/terminal-splits.gif" type="image/gif"><img src="assets/feature-wall/terminal-splits.jpg" alt="Terminales divididas de nivel Ghostty" width="390" /></picture><br/></kbd></a><br/><br/>
+  <a href="https://www.onorca.dev/docs/browser/design-mode"><kbd><strong>Modo diseño</strong><br/><br/><picture><source srcset="assets/feature-wall/design-mode.gif" type="image/gif"><img src="assets/feature-wall/design-mode.jpg" alt="Navegador integrado y modo diseño" width="390" /></picture><br/></kbd></a> &nbsp;&nbsp;
+  <a href="https://www.onorca.dev/docs/agents/supported"><kbd><strong>Cualquier agente CLI</strong><br/><br/><picture><source srcset="assets/feature-wall/cli-agents.gif" type="image/gif"><img src="assets/feature-wall/cli-agents.jpg" alt="Compatible con cualquier agente CLI" width="390" /></picture><br/></kbd></a><br/><br/>
+  <a href="https://www.onorca.dev/docs/ssh"><kbd><strong>Worktrees por SSH</strong><br/><br/><picture><source srcset="assets/feature-wall/ssh-worktrees.gif" type="image/gif"><img src="assets/feature-wall/ssh-worktrees.jpg" alt="Worktrees remotos por SSH" width="390" /></picture><br/></kbd></a> &nbsp;&nbsp;
+  <a href="https://www.onorca.dev/docs/editing/file-explorer"><kbd><strong>Archivos a agentes</strong><br/><br/><picture><source srcset="assets/feature-wall/file-drag.gif" type="image/gif"><img src="assets/feature-wall/file-drag.jpg" alt="Arrastra archivos e imágenes al prompt de un agente" width="390" /></picture><br/></kbd></a><br/><br/>
+  <a href="https://www.onorca.dev/docs/review/annotate-ai-diff"><kbd><strong>Anotar diffs de IA</strong><br/><br/><picture><source srcset="assets/feature-wall/annotate-diff.gif" type="image/gif"><img src="assets/feature-wall/annotate-diff.jpg" alt="Anotar diffs generados por IA" width="390" /></picture><br/></kbd></a> &nbsp;&nbsp;
+  <a href="https://www.onorca.dev/docs/cli/overview"><kbd><strong>Orca CLI</strong><br/><br/><picture><source srcset="assets/feature-wall/orca-cli.gif" type="image/gif"><img src="assets/feature-wall/orca-cli.jpg" alt="Automatiza Orca desde la CLI" width="390" /></picture><br/></kbd></a><br/><br/>
+  <a href="https://www.onorca.dev/docs/settings"><kbd><strong>Nativo de teclado</strong><br/><br/><picture><source srcset="assets/feature-wall/keyboard-native.gif" type="image/gif"><img src="assets/feature-wall/keyboard-native.jpg" alt="Flujos de teclado y atajos reasignables" width="390" /></picture><br/></kbd></a> &nbsp;&nbsp;
+  <a href="https://www.onorca.dev/docs/agents/usage-tracking"><kbd><strong>Cambio de cuenta y seguimiento de uso</strong><br/><br/><picture><source srcset="assets/feature-wall/codex-accounts.gif" type="image/gif"><img src="assets/feature-wall/codex-accounts.jpg" alt="Cambio de cuenta y seguimiento de uso" width="390" /></picture><br/></kbd></a><br/><br/>
+  <a href="https://www.onorca.dev/docs/editing/markdown"><kbd><strong>Previews ricos del repo</strong><br/><br/><picture><source srcset="assets/feature-wall/markdown-editor.gif" type="image/gif"><img src="assets/feature-wall/markdown-editor.jpg" alt="Previsualización de Markdown, imágenes, PDFs y documentos del repo" width="390" /></picture><br/></kbd></a> &nbsp;&nbsp;
+  <a href="https://www.onorca.dev/docs/model/tabs-panes-splits"><kbd><strong>Divide cualquier cosa</strong><br/><br/><picture><source srcset="assets/feature-wall/split-screen.gif" type="image/gif"><img src="assets/feature-wall/split-screen.jpg" alt="Paneles divididos para agentes, terminales, navegadores y archivos" width="390" /></picture><br/></kbd></a>
 </p>
-
----
-
-## [Nuevo] Cambio rápido entre cuentas de Codex
-
-**¿Varias cuentas de Codex? Cambia con un clic.**
-
-Si usas varias cuentas de Codex para aprovechar el mejor precio en tokens, Orca te permite cambiar entre ellas al instante — sin volver a hacer login, sin tocar archivos de configuración. Elige una cuenta y sigue construyendo.
-
-<p align="center">
-  <img src="assets/codex-account-switcher.gif" alt="Cambio de cuentas de Codex en Orca — alterna entre múltiples cuentas de Codex" width="800" />
-</p>
-
----
-
-## [Nuevo] Navegador por worktree y modo diseño
-
-**Mira tu app. Haz clic en cualquier elemento. Suéltalo en el chat.**
-
-Orca trae un navegador integrado dentro de tu worktree. Previsualiza tu app mientras la construyes, y cuando quieras cambia al modo diseño — haz clic en cualquier elemento de UI y cae directo en tu chat con la IA como contexto. Sin capturas, sin copiar selectores. Solo apunta a lo que quieres cambiar y dile al agente qué hacer.
-
-<p align="center">
-  <img src="assets/orca-design-mode.gif" alt="Modo diseño de Orca — haz clic en cualquier elemento de UI y suéltalo en el chat" width="800" />
-</p>
-
----
-
-## [Nuevo] Presentamos el Orca CLI
-
-**Orquestación de agentes desde tu terminal.**
-
-Deja que tu agente de IA controle tu IDE. Usa IA para agregar proyectos al IDE, crear worktrees y actualizar el comentario del worktree actual con checkpoints de progreso directamente desde la terminal. Viene incluido con el Orca IDE (instálalo en Ajustes).
-
-```bash
-npx skills add https://github.com/stablyai/orca --skill orca-cli
-```
 
 ---
 

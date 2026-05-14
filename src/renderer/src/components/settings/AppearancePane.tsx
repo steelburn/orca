@@ -5,11 +5,15 @@ import { UIZoomControl } from './UIZoomControl'
 import { SearchableSetting } from './SearchableSetting'
 import { matchesSettingsSearch, type SettingsSearchEntry } from './settings-search'
 import { useAppStore } from '../../store'
+import { FontAutocomplete } from './SettingsFormControls'
+import { DEFAULT_APP_FONT_FAMILY } from '../../../../shared/constants'
+import { useAvailableStatusBarToggles } from '../status-bar/use-available-status-bar-toggles'
 
 type AppearancePaneProps = {
   settings: GlobalSettings
   updateSettings: (updates: Partial<GlobalSettings>) => void
   applyTheme: (theme: 'system' | 'dark' | 'light') => void
+  fontSuggestions: string[]
 }
 
 const STATUS_BAR_TOGGLES: readonly {
@@ -56,18 +60,24 @@ const STATUS_BAR_TOGGLES: readonly {
       'Show the active SSH connection. Only visible once an SSH target is configured.'
   },
   {
-    id: 'sessions',
-    title: 'Terminal Sessions',
-    description: 'Show the terminal session count in the status bar.',
-    keywords: ['status bar', 'terminal', 'sessions', 'count', 'pty'],
-    toggleDescription: 'Show the number of active terminal sessions across all workspaces.'
-  },
-  {
-    id: 'memory',
-    title: 'Memory Monitoring',
-    description: 'Show memory and CPU usage in the status bar.',
-    keywords: ['status bar', 'memory', 'ram', 'cpu', 'monitoring', 'usage', 'performance'],
-    toggleDescription: 'Show total memory and CPU usage. Click it to see a per-workspace breakdown.'
+    id: 'resource-usage',
+    title: 'Resource Usage',
+    description: 'Show CPU, memory, and terminal session indicators in the status bar.',
+    keywords: [
+      'status bar',
+      'resource',
+      'usage',
+      'memory',
+      'ram',
+      'cpu',
+      'terminal',
+      'sessions',
+      'pty',
+      'monitoring',
+      'performance'
+    ],
+    toggleDescription:
+      'Show CPU, memory, and terminal session counts. Click it for a per-workspace breakdown and daemon controls.'
   }
 ]
 
@@ -87,6 +97,14 @@ const ZOOM_ENTRIES: SettingsSearchEntry[] = [
   }
 ]
 
+const TYPOGRAPHY_ENTRIES: SettingsSearchEntry[] = [
+  {
+    title: 'IDE Font',
+    description: 'Choose the font used by the Orca interface.',
+    keywords: ['font', 'typeface', 'typography', 'ide', 'orca', 'interface', 'app', 'ui']
+  }
+]
+
 const LAYOUT_ENTRIES: SettingsSearchEntry[] = [
   {
     title: 'Open Right Sidebar by Default',
@@ -97,9 +115,9 @@ const LAYOUT_ENTRIES: SettingsSearchEntry[] = [
 
 const TITLEBAR_ENTRIES: SettingsSearchEntry[] = [
   {
-    title: 'Titlebar Agent Activity',
-    description: 'Show the number of active agents in the titlebar.',
-    keywords: ['titlebar', 'agent', 'badge', 'active', 'count', 'status']
+    title: 'Titlebar App Name',
+    description: 'Show Orca in the titlebar.',
+    keywords: ['titlebar', 'orca', 'app', 'name', 'brand']
   }
 ]
 
@@ -117,6 +135,7 @@ const SIDEBAR_ENTRIES: SettingsSearchEntry[] = [
 
 export const APPEARANCE_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
   ...THEME_ENTRIES,
+  ...TYPOGRAPHY_ENTRIES,
   ...ZOOM_ENTRIES,
   ...LAYOUT_ENTRIES,
   ...TITLEBAR_ENTRIES,
@@ -127,7 +146,8 @@ export const APPEARANCE_PANE_SEARCH_ENTRIES: SettingsSearchEntry[] = [
 export function AppearancePane({
   settings,
   updateSettings,
-  applyTheme
+  applyTheme,
+  fontSuggestions
 }: AppearancePaneProps): React.JSX.Element {
   const searchQuery = useAppStore((state) => state.settingsSearchQuery)
   const isMac = navigator.userAgent.includes('Mac')
@@ -135,6 +155,7 @@ export function AppearancePane({
   const zoomOutLabel = isMac ? '⌘-' : 'Ctrl -'
   const statusBarItems = useAppStore((state) => state.statusBarItems)
   const toggleStatusBarItem = useAppStore((state) => state.toggleStatusBarItem)
+  const visibleStatusBarToggles = useAvailableStatusBarToggles(STATUS_BAR_TOGGLES)
 
   const visibleSections = [
     matchesSettingsSearch(searchQuery, THEME_ENTRIES) ? (
@@ -191,6 +212,33 @@ export function AppearancePane({
         </SearchableSetting>
       </section>
     ) : null,
+    matchesSettingsSearch(searchQuery, TYPOGRAPHY_ENTRIES) ? (
+      <section key="typography" className="space-y-4">
+        <div className="space-y-1">
+          <h3 className="text-sm font-semibold">Typography</h3>
+          <p className="text-xs text-muted-foreground">
+            Choose the font used by the Orca interface.
+          </p>
+        </div>
+
+        <SearchableSetting
+          title="IDE Font"
+          description="Choose the font used by the Orca interface."
+          keywords={['font', 'typeface', 'typography', 'ide', 'orca', 'interface', 'app', 'ui']}
+          className="space-y-2"
+        >
+          <Label>IDE Font</Label>
+          <FontAutocomplete
+            value={settings.appFontFamily}
+            suggestions={fontSuggestions}
+            placeholder={DEFAULT_APP_FONT_FAMILY}
+            onChange={(value) =>
+              updateSettings({ appFontFamily: value.trim() || DEFAULT_APP_FONT_FAMILY })
+            }
+          />
+        </SearchableSetting>
+      </section>
+    ) : null,
     matchesSettingsSearch(searchQuery, LAYOUT_ENTRIES) ? (
       <section key="layout" className="space-y-4">
         <div className="space-y-1">
@@ -243,32 +291,30 @@ export function AppearancePane({
         </div>
 
         <SearchableSetting
-          title="Titlebar Agent Activity"
-          description="Show the number of active agents in the titlebar."
-          keywords={['titlebar', 'agent', 'badge', 'active', 'count', 'status']}
+          title="Titlebar App Name"
+          description="Show Orca in the titlebar."
+          keywords={['titlebar', 'orca', 'app', 'name', 'brand']}
           className="flex items-center justify-between gap-4 px-1 py-2"
         >
           <div className="space-y-0.5">
-            <Label>Titlebar Agent Activity</Label>
-            <p className="text-xs text-muted-foreground">
-              Show the number of active agents in the titlebar.
-            </p>
+            <Label>Titlebar App Name</Label>
+            <p className="text-xs text-muted-foreground">Show Orca in the titlebar.</p>
           </div>
           <button
             role="switch"
-            aria-checked={settings.showTitlebarAgentActivity}
+            aria-checked={settings.showTitlebarAppName}
             onClick={() =>
               updateSettings({
-                showTitlebarAgentActivity: !settings.showTitlebarAgentActivity
+                showTitlebarAppName: !settings.showTitlebarAppName
               })
             }
             className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full border border-transparent transition-colors ${
-              settings.showTitlebarAgentActivity ? 'bg-foreground' : 'bg-muted-foreground/30'
+              settings.showTitlebarAppName ? 'bg-foreground' : 'bg-muted-foreground/30'
             }`}
           >
             <span
               className={`pointer-events-none block size-3.5 rounded-full bg-background shadow-sm transition-transform ${
-                settings.showTitlebarAgentActivity ? 'translate-x-4' : 'translate-x-0.5'
+                settings.showTitlebarAppName ? 'translate-x-4' : 'translate-x-0.5'
               }`}
             />
           </button>
@@ -285,7 +331,7 @@ export function AppearancePane({
           </p>
         </div>
 
-        {STATUS_BAR_TOGGLES.map((toggle) => {
+        {visibleStatusBarToggles.map((toggle) => {
           const enabled = statusBarItems.includes(toggle.id)
           return (
             <SearchableSetting

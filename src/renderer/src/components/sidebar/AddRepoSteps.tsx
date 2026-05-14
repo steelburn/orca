@@ -21,7 +21,7 @@ import type { SshTarget, SshConnectionState } from '../../../../shared/ssh-types
 
 export function useRemoteRepo(
   fetchWorktrees: (repoId: string) => Promise<void>,
-  setStep: (step: 'add' | 'clone' | 'remote' | 'setup') => void,
+  setStep: (step: 'add' | 'clone' | 'remote' | 'create' | 'setup') => void,
   setAddedRepo: (repo: Repo | null) => void,
   closeModal: () => void
 ) {
@@ -240,7 +240,7 @@ export function RemoteStep({
               </Button>
             </div>
           ) : (
-            <div className="space-y-1.5">
+            <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
               {sshTargets.map((target) => (
                 <SshTargetRow
                   key={target.id}

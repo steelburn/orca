@@ -7,11 +7,15 @@ import {
   FlaskConical,
   GitBranch,
   Globe,
+  Info,
   Keyboard,
+  Lock,
+  MousePointerClick,
   ShieldCheck,
   Palette,
   Server,
   SlidersHorizontal,
+  Smartphone,
   Blocks,
   SquareTerminal,
   UserCog
@@ -21,7 +25,9 @@ import { getRepoKindLabel, isFolderRepo } from '../../../../shared/repo-kind'
 import { useAppStore } from '../../store'
 import { useSystemPrefersDark } from '@/components/terminal-pane/use-system-prefers-dark'
 import { isMacUserAgent, isWindowsUserAgent } from '@/components/terminal-pane/pane-helpers'
+import { applyDocumentTheme } from '@/lib/document-theme'
 import { SCROLLBACK_PRESETS_MB, getFallbackTerminalFonts } from './SettingsConstants'
+import { DEFAULT_APP_FONT_FAMILY } from '../../../../shared/constants'
 import { GeneralPane, GENERAL_PANE_SEARCH_ENTRIES } from './GeneralPane'
 import { BrowserPane, BROWSER_PANE_SEARCH_ENTRIES } from './BrowserPane'
 import { AppearancePane, APPEARANCE_PANE_SEARCH_ENTRIES } from './AppearancePane'
@@ -29,6 +35,7 @@ import { ShortcutsPane, SHORTCUTS_PANE_SEARCH_ENTRIES } from './ShortcutsPane'
 import { TerminalPane } from './TerminalPane'
 import { useGhosttyImport } from './useGhosttyImport'
 import { Button } from '../ui/button'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip'
 import ghosttyIcon from '../../../../../resources/ghostty.svg'
 import { RepositoryPane, getRepositoryPaneSearchEntries } from './RepositoryPane'
 import { getTerminalPaneSearchEntries } from './terminal-search'
@@ -44,6 +51,10 @@ import {
   DeveloperPermissionsPane,
   DEVELOPER_PERMISSIONS_PANE_SEARCH_ENTRIES
 } from './DeveloperPermissionsPane'
+import { ComputerUsePane, COMPUTER_USE_PANE_SEARCH_ENTRIES } from './ComputerUsePane'
+import { MobileSettingsPane, MOBILE_SETTINGS_PANE_SEARCH_ENTRIES } from './MobileSettingsPane'
+import { PrivacyPane } from './PrivacyPane'
+import { PRIVACY_PANE_SEARCH_ENTRIES } from './privacy-search'
 import { SettingsSidebar } from './SettingsSidebar'
 import { SettingsSection } from './SettingsSection'
 import { matchesSettingsSearch, type SettingsSearchEntry } from './settings-search'
@@ -57,12 +68,15 @@ type SettingsNavTarget =
   | 'appearance'
   | 'terminal'
   | 'notifications'
+  | 'computer-use'
   | 'developer-permissions'
+  | 'privacy'
   | 'shortcuts'
   | 'stats'
   | 'ssh'
   | 'experimental'
   | 'agents'
+  | 'mobile'
   | 'repo'
 
 type SettingsNavSection = {
@@ -83,6 +97,16 @@ function getSettingsSectionId(pane: SettingsNavTarget, repoId: string | null): s
 
 function getFallbackVisibleSection(sections: SettingsNavSection[]): SettingsNavSection | undefined {
   return sections.at(0)
+}
+
+function computerUsePlatformLabel(args: { isWindows: boolean; isMac: boolean }): string {
+  if (args.isWindows) {
+    return 'Windows'
+  }
+  if (!args.isMac) {
+    return 'Linux'
+  }
+  return 'This platform'
 }
 
 // Why: after a sidebar jump the target section is now in the viewport center
@@ -150,6 +174,8 @@ function Settings(): React.JSX.Element {
   const systemPrefersDark = useSystemPrefersDark()
   const isWindows = isWindowsUserAgent()
   const isMac = isMacUserAgent()
+  const showComputerUsePreviewTooltip = !isMac
+  const computerUsePlatform = computerUsePlatformLabel({ isWindows, isMac })
   // Why: the Terminal settings section shares one search index with the
   // sidebar. We trim platform-only entries on other platforms so search never
   // reveals controls that the renderer will intentionally hide.
@@ -175,8 +201,8 @@ function Settings(): React.JSX.Element {
     void window.api.wsl.isAvailable().then(setWslAvailable)
     void window.api.pwsh.isAvailable().then(setPwshAvailable)
   }, [isWindows])
-  const [terminalFontSuggestions, setTerminalFontSuggestions] = useState<string[]>(
-    getFallbackTerminalFonts()
+  const [fontSuggestions, setFontSuggestions] = useState<string[]>(
+    Array.from(new Set([DEFAULT_APP_FONT_FAMILY, ...getFallbackTerminalFonts()]))
   )
   const [activeSectionId, setActiveSectionId] = useState('general')
   // Why: the hidden-experimental group is an unlock — Shift-clicking the
@@ -185,6 +211,7 @@ function Settings(): React.JSX.Element {
   // leak through into a normal reopen of Settings.
   const [hiddenExperimentalUnlocked, setHiddenExperimentalUnlocked] = useState(false)
   const contentScrollRef = useRef<HTMLDivElement | null>(null)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
   const terminalFontsLoadedRef = useRef(false)
   const pendingNavSectionRef = useRef<string | null>(null)
   const pendingScrollTargetRef = useRef<string | null>(null)
@@ -213,6 +240,30 @@ function Settings(): React.JSX.Element {
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [closeSettingsPage])
 
+  useEffect(() => {
+    const handleFindShortcut = (event: KeyboardEvent): void => {
+      if (event.defaultPrevented || event.altKey || event.shiftKey) {
+        return
+      }
+      // Why: Cmd on Mac, Ctrl elsewhere — matches the rest of the app's
+      // mod-key convention (see App.tsx) and aligns with platform Find norms.
+      const mod = isMac ? event.metaKey && !event.ctrlKey : event.ctrlKey && !event.metaKey
+      if (!mod || event.key.toLowerCase() !== 'f') {
+        return
+      }
+      const input = searchInputRef.current
+      if (!input) {
+        return
+      }
+      event.preventDefault()
+      input.focus()
+      input.select()
+    }
+
+    document.addEventListener('keydown', handleFindShortcut)
+    return () => document.removeEventListener('keydown', handleFindShortcut)
+  }, [isMac])
+
   useEffect(
     () => () => {
       // Why: the settings search is a transient in-page filter. Leaving it behind makes the next
@@ -223,7 +274,7 @@ function Settings(): React.JSX.Element {
   )
 
   useEffect(() => {
-    if (!settingsNavigationTarget) {
+    if (!settings || !settingsNavigationTarget) {
       return
     }
 
@@ -234,7 +285,7 @@ function Settings(): React.JSX.Element {
     pendingNavSectionRef.current = paneSectionId
     pendingScrollTargetRef.current = settingsNavigationTarget.sectionId ?? paneSectionId
     clearSettingsTarget()
-  }, [clearSettingsTarget, settingsNavigationTarget])
+  }, [clearSettingsTarget, settings, settingsNavigationTarget])
 
   useEffect(() => {
     if (terminalFontsLoadedRef.current) {
@@ -250,7 +301,9 @@ function Settings(): React.JSX.Element {
           return
         }
         terminalFontsLoadedRef.current = true
-        setTerminalFontSuggestions((prev) => Array.from(new Set([...fonts, ...prev])).slice(0, 320))
+        setFontSuggestions((prev) =>
+          Array.from(new Set([DEFAULT_APP_FONT_FAMILY, ...fonts, ...prev])).slice(0, 320)
+        )
       } catch {
         // Fall back to curated cross-platform suggestions.
       }
@@ -317,19 +370,7 @@ function Settings(): React.JSX.Element {
   }, [repos])
 
   const applyTheme = useCallback((theme: 'system' | 'dark' | 'light') => {
-    const root = document.documentElement
-    if (theme === 'dark') {
-      root.classList.add('dark')
-    } else if (theme === 'light') {
-      root.classList.remove('dark')
-    } else {
-      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
-      if (prefersDark) {
-        root.classList.add('dark')
-      } else {
-        root.classList.remove('dark')
-      }
-    }
+    applyDocumentTheme(theme)
   }, [])
 
   const displayedGitUsername = repos[0]?.gitUsername ?? ''
@@ -392,6 +433,22 @@ function Settings(): React.JSX.Element {
         icon: Bell,
         searchEntries: NOTIFICATIONS_PANE_SEARCH_ENTRIES
       },
+      {
+        id: 'mobile',
+        title: 'Mobile',
+        description: 'Control terminals and agents from your phone.',
+        icon: Smartphone,
+        searchEntries: MOBILE_SETTINGS_PANE_SEARCH_ENTRIES,
+        badge: 'Beta'
+      },
+      {
+        id: 'computer-use',
+        title: 'Computer Use',
+        description: 'Enable agents to control any app on your computer.',
+        icon: MousePointerClick,
+        searchEntries: COMPUTER_USE_PANE_SEARCH_ENTRIES,
+        badge: 'Beta'
+      },
       ...(isMac
         ? [
             {
@@ -403,6 +460,13 @@ function Settings(): React.JSX.Element {
             }
           ]
         : []),
+      {
+        id: 'privacy',
+        title: 'Privacy & Telemetry',
+        description: 'Anonymous usage data and telemetry controls.',
+        icon: Lock,
+        searchEntries: PRIVACY_PANE_SEARCH_ENTRIES
+      },
       {
         id: 'shortcuts',
         title: 'Shortcuts',
@@ -599,6 +663,7 @@ function Settings(): React.JSX.Element {
         repoSections={repoNavSections}
         hasRepos={repos.length > 0}
         searchQuery={settingsSearchQuery}
+        searchInputRef={searchInputRef}
         onBack={closeSettingsPage}
         onSearchChange={setSettingsSearchQuery}
         onSelectSection={scrollToSection}
@@ -672,6 +737,7 @@ function Settings(): React.JSX.Element {
                     settings={settings}
                     updateSettings={updateSettings}
                     applyTheme={applyTheme}
+                    fontSuggestions={fontSuggestions}
                   />
                 </SettingsSection>
 
@@ -696,7 +762,9 @@ function Settings(): React.JSX.Element {
                     settings={settings}
                     updateSettings={updateSettings}
                     systemPrefersDark={systemPrefersDark}
-                    terminalFontSuggestions={terminalFontSuggestions}
+                    terminalFontSuggestions={fontSuggestions.filter(
+                      (font) => font !== DEFAULT_APP_FONT_FAMILY
+                    )}
                     scrollbackMode={scrollbackMode}
                     setScrollbackMode={setScrollbackMode}
                     ghostty={ghostty}
@@ -723,6 +791,49 @@ function Settings(): React.JSX.Element {
                   <NotificationsPane settings={settings} updateSettings={updateSettings} />
                 </SettingsSection>
 
+                <SettingsSection
+                  id="mobile"
+                  title="Mobile"
+                  badge="Beta"
+                  description="Control terminals and agents from your phone."
+                  searchEntries={MOBILE_SETTINGS_PANE_SEARCH_ENTRIES}
+                >
+                  <MobileSettingsPane settings={settings} updateSettings={updateSettings} />
+                </SettingsSection>
+
+                <SettingsSection
+                  id="computer-use"
+                  title="Computer Use"
+                  badge="Beta"
+                  badgeAccessory={
+                    showComputerUsePreviewTooltip ? (
+                      <TooltipProvider delayDuration={250}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <button
+                              type="button"
+                              className="text-muted-foreground transition-colors hover:text-foreground"
+                              aria-label={`${computerUsePlatform} Computer Use preview details`}
+                            >
+                              <Info className="size-3.5" />
+                            </button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" sideOffset={6} className="max-w-72">
+                            <span>
+                              {computerUsePlatform} Computer Use is an early preview. Some apps and
+                              desktop environments may behave inconsistently.
+                            </span>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    ) : null
+                  }
+                  description="Enable agents to control any app on your computer."
+                  searchEntries={COMPUTER_USE_PANE_SEARCH_ENTRIES}
+                >
+                  <ComputerUsePane />
+                </SettingsSection>
+
                 {isMac ? (
                   <SettingsSection
                     id="developer-permissions"
@@ -733,6 +844,15 @@ function Settings(): React.JSX.Element {
                     <DeveloperPermissionsPane />
                   </SettingsSection>
                 ) : null}
+
+                <SettingsSection
+                  id="privacy"
+                  title="Privacy & Telemetry"
+                  description="Anonymous usage data and telemetry controls."
+                  searchEntries={PRIVACY_PANE_SEARCH_ENTRIES}
+                >
+                  <PrivacyPane settings={settings} />
+                </SettingsSection>
 
                 <SettingsSection
                   id="shortcuts"

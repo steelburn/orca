@@ -1,3 +1,4 @@
+/* eslint-disable max-lines -- Why: CLI parser tests share one mocked runtime client and fixture queue; splitting this file would duplicate setup and make command coverage harder to audit. */
 import path from 'path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -145,6 +146,91 @@ describe('orca cli worktree awareness', () => {
     })
   })
 
+  it('passes explicit activation through worktree.create', async () => {
+    queueFixtures(
+      callMock,
+      okFixture('req_create', {
+        worktree: buildWorktree('/tmp/repo/feature', 'feature', 'abc', 'repo-1')
+      })
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      ['worktree', 'create', '--repo', 'id:repo-1', '--name', 'feature', '--activate', '--json'],
+      '/tmp/repo'
+    )
+
+    expect(callMock).toHaveBeenCalledWith('worktree.create', {
+      repo: 'id:repo-1',
+      name: 'feature',
+      baseBranch: undefined,
+      linkedIssue: undefined,
+      comment: undefined,
+      runHooks: false,
+      activate: true
+    })
+  })
+
+  it('opts into setup and activation when worktree.create runs hooks', async () => {
+    queueFixtures(
+      callMock,
+      okFixture('req_create', {
+        worktree: buildWorktree('/tmp/repo/feature', 'feature', 'abc', 'repo-1')
+      })
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      ['worktree', 'create', '--repo', 'id:repo-1', '--name', 'feature', '--run-hooks', '--json'],
+      '/tmp/repo'
+    )
+
+    expect(callMock).toHaveBeenCalledWith('worktree.create', {
+      repo: 'id:repo-1',
+      name: 'feature',
+      baseBranch: undefined,
+      linkedIssue: undefined,
+      comment: undefined,
+      runHooks: true,
+      activate: true
+    })
+  })
+
+  it('passes explicit focus through terminal.create', async () => {
+    queueFixtures(
+      callMock,
+      okFixture('req_terminal_create', {
+        terminal: {
+          handle: 'term_1',
+          worktreeId: 'repo-1::/tmp/repo/feature',
+          title: 'RUNNER'
+        }
+      })
+    )
+    vi.spyOn(console, 'log').mockImplementation(() => {})
+
+    await main(
+      [
+        'terminal',
+        'create',
+        '--worktree',
+        'path:/tmp/repo/feature',
+        '--title',
+        'RUNNER',
+        '--focus',
+        '--json'
+      ],
+      '/tmp/repo'
+    )
+
+    expect(callMock).toHaveBeenCalledWith('terminal.create', {
+      worktree: 'path:/tmp/repo/feature',
+      command: undefined,
+      title: 'RUNNER',
+      focus: true
+    })
+  })
+
   it('uses the resolved enclosing worktree for other worktree consumers', async () => {
     queueFixtures(
       callMock,
@@ -195,6 +281,31 @@ describe('orca cli worktree awareness', () => {
       devMode: false
     })
     expect(logSpy).toHaveBeenCalledWith('Sent 2 messages to 2 recipients')
+  })
+
+  it('rejects unknown task-update status with an enum-aware error', async () => {
+    process.env.ORCA_TERMINAL_HANDLE = 'term_coord'
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const priorExitCode = process.exitCode
+
+    await main(
+      ['orchestration', 'task-update', '--id', 'task_x', '--status', 'complete'],
+      '/tmp/repo'
+    )
+
+    const output = [...errSpy.mock.calls, ...logSpy.mock.calls]
+      .flat()
+      .map((v) => (typeof v === 'string' ? v : JSON.stringify(v)))
+      .join('\n')
+    expect(output).toContain("invalid status 'complete'")
+    expect(output).toContain('pending, ready, dispatched, completed, failed, blocked')
+    expect(callMock).not.toHaveBeenCalled()
+    expect(process.exitCode).toBe(1)
+
+    // Reset exitCode so subsequent tests don't inherit the failure.
+    process.exitCode = priorExitCode
+    errSpy.mockRestore()
   })
 
   it('passes dev mode to injected orchestration dispatches', async () => {

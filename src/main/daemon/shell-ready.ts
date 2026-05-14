@@ -112,7 +112,13 @@ __orca_restore_attribution_path() {
   esac
   export PATH="\${ORCA_ATTRIBUTION_SHIM_DIR}:$PATH"
 }
-[[ ! -o login ]] && __orca_restore_attribution_path
+if [[ ! -o login ]]; then
+  __orca_restore_attribution_path
+  # Why: ~/.zshrc can export the user's default OpenCode config after spawn.
+  [[ -n "\${ORCA_OPENCODE_CONFIG_DIR:-}" ]] && export OPENCODE_CONFIG_DIR="\${ORCA_OPENCODE_CONFIG_DIR}"
+  # Why: PI_CODING_AGENT_DIR must keep the same PTY-scoped overlay after rc files.
+  [[ -n "\${ORCA_PI_CODING_AGENT_DIR:-}" ]] && export PI_CODING_AGENT_DIR="\${ORCA_PI_CODING_AGENT_DIR}"
+fi
 `
   const zshLogin = `# Orca daemon zsh shell-ready wrapper
 _orca_home="\${ORCA_ORIG_ZDOTDIR:-$HOME}"
@@ -130,11 +136,18 @@ __orca_restore_attribution_path() {
   export PATH="\${ORCA_ATTRIBUTION_SHIM_DIR}:$PATH"
 }
 __orca_restore_attribution_path
+# Why: .zlogin is the final login startup file before the prompt is shown.
+[[ -n "\${ORCA_OPENCODE_CONFIG_DIR:-}" ]] && export OPENCODE_CONFIG_DIR="\${ORCA_OPENCODE_CONFIG_DIR}"
+[[ -n "\${ORCA_PI_CODING_AGENT_DIR:-}" ]] && export PI_CODING_AGENT_DIR="\${ORCA_PI_CODING_AGENT_DIR}"
 if [[ "\${ORCA_SHELL_READY_MARKER:-0}" == "1" ]]; then
   __orca_prompt_mark() {
     printf "${SHELL_READY_MARKER}"
   }
-  precmd_functions=(\${precmd_functions[@]} __orca_prompt_mark)
+  # Why: zsh precmd fires before zle switches the PTY into line-editing mode,
+  # so writing startup input there can be echoed once outside the prompt.
+  autoload -Uz add-zle-hook-widget
+  zle -N __orca_prompt_mark
+  add-zle-hook-widget line-init __orca_prompt_mark
 fi
 `
   const bashRc = `# Orca daemon bash shell-ready wrapper
@@ -154,6 +167,11 @@ __orca_restore_attribution_path() {
   export PATH="\${ORCA_ATTRIBUTION_SHIM_DIR}:$PATH"
 }
 __orca_restore_attribution_path
+# Why: user startup files may set the default OpenCode config after Orca's
+# spawn env; restore the PTY-scoped overlay before the first prompt.
+[[ -n "\${ORCA_OPENCODE_CONFIG_DIR:-}" ]] && export OPENCODE_CONFIG_DIR="\${ORCA_OPENCODE_CONFIG_DIR}"
+# Why: PI_CODING_AGENT_DIR is also a single-root env var users may re-export.
+[[ -n "\${ORCA_PI_CODING_AGENT_DIR:-}" ]] && export PI_CODING_AGENT_DIR="\${ORCA_PI_CODING_AGENT_DIR}"
 if [[ "\${ORCA_SHELL_READY_MARKER:-0}" == "1" ]]; then
   __orca_prompt_mark() {
     printf "${SHELL_READY_MARKER}"

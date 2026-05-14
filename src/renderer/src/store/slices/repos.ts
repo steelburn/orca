@@ -3,6 +3,7 @@ import { toast } from 'sonner'
 import type { AppState } from '../types'
 import type { Repo } from '../../../../shared/types'
 import { isGitRepoKind } from '../../../../shared/repo-kind'
+import { getRepoIdFromWorktreeId } from './worktree-helpers'
 
 const ERROR_TOAST_DURATION = 60_000
 
@@ -23,11 +24,13 @@ export type RepoSlice = {
         | 'hookSettings'
         | 'worktreeBaseRef'
         | 'kind'
+        | 'symlinkPaths'
         | 'issueSourcePreference'
       >
     >
   ) => Promise<void>
   setActiveRepo: (repoId: string | null) => void
+  reorderRepos: (orderedIds: string[]) => Promise<void>
 }
 
 export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, get) => ({
@@ -204,6 +207,19 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
         const activeFileCleared = s.activeFileId
           ? s.openFiles.some((f) => f.id === s.activeFileId && worktreeIdSet.has(f.worktreeId))
           : false
+        // Why: pruneLastVisitedTimestamps defers entries for repos missing
+        // from worktreesByRepo (treats them as not-yet-hydrated SSH repos).
+        // Drop this repo's timestamps explicitly so they cannot survive prune
+        // forever after the repo is removed.
+        let nextLastVisitedAtByWorktreeId = s.lastVisitedAtByWorktreeId
+        for (const id of Object.keys(s.lastVisitedAtByWorktreeId)) {
+          if (getRepoIdFromWorktreeId(id) === repoId) {
+            if (nextLastVisitedAtByWorktreeId === s.lastVisitedAtByWorktreeId) {
+              nextLastVisitedAtByWorktreeId = { ...s.lastVisitedAtByWorktreeId }
+            }
+            delete nextLastVisitedAtByWorktreeId[id]
+          }
+        }
         const nextRepos = s.repos.filter((r) => r.id !== repoId)
         return {
           repos: nextRepos,
@@ -221,6 +237,7 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
           activeTabTypeByWorktree: nextActiveTabTypeByWorktree,
           activeFileId: activeFileCleared ? null : s.activeFileId,
           activeTabType: activeFileCleared ? 'terminal' : s.activeTabType,
+          lastVisitedAtByWorktreeId: nextLastVisitedAtByWorktreeId,
           sortEpoch: s.sortEpoch + 1,
           // Why: removing the last repo while in settings leaves activeView as
           // 'settings', which renders an empty settings pane instead of Landing.
@@ -251,5 +268,33 @@ export const createRepoSlice: StateCreator<AppState, [], [], RepoSlice> = (set, 
     }
   },
 
-  setActiveRepo: (repoId) => set({ activeRepoId: repoId })
+  setActiveRepo: (repoId) => set({ activeRepoId: repoId }),
+
+  reorderRepos: async (orderedIds) => {
+    // Optimistically apply the new order so the sidebar updates instantly;
+    // resync only if main rejects (stale permutation due to a racing add/remove).
+    const previous = get().repos
+    const byId = new Map(previous.map((r) => [r.id, r]))
+    const next: Repo[] = []
+    for (const id of orderedIds) {
+      const repo = byId.get(id)
+      if (repo) {
+        next.push(repo)
+      }
+    }
+    if (next.length !== previous.length) {
+      // Caller passed a non-permutation — refuse to apply locally.
+      return
+    }
+    set({ repos: next })
+    try {
+      const result = await window.api.repos.reorder({ orderedIds })
+      if (result.status === 'rejected') {
+        await get().fetchRepos()
+      }
+    } catch (err) {
+      console.error('Failed to reorder repos:', err)
+      await get().fetchRepos()
+    }
+  }
 })

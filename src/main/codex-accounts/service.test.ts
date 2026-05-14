@@ -24,6 +24,7 @@ vi.mock('node:os', async () => {
 })
 
 function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings {
+  const appFontFamily = overrides.appFontFamily ?? 'Geist'
   return {
     workspaceDir: testState.fakeHomeDir,
     nestWorkspaces: false,
@@ -59,14 +60,18 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     terminalScrollbackBytes: 10_000_000,
     openLinksInApp: false,
     rightSidebarOpenByDefault: true,
-    showTitlebarAgentActivity: true,
+    showTitlebarAppName: true,
     showTasksButton: true,
+    floatingTerminalEnabled: false,
+    floatingTerminalCwd: '~',
+    floatingTerminalTriggerLocation: 'floating-button',
     diffDefaultView: 'inline',
     notifications: {
       enabled: true,
       agentTaskComplete: true,
       terminalBell: false,
-      suppressWhenFocused: true
+      suppressWhenFocused: true,
+      customSoundPath: null
     },
     promptCacheTimerEnabled: false,
     promptCacheTtlMs: 300_000,
@@ -87,12 +92,16 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     agentCmdOverrides: {},
     terminalMacOptionAsAlt: 'false',
     terminalMacOptionAsAltMigrated: true,
-    experimentalAgentDashboard: false,
-    experimentalSidekick: false,
+    experimentalMobile: false,
+    mobileAutoRestoreFitMs: null,
+    experimentalPet: false,
+    experimentalActivity: true,
+    experimentalWorktreeSymlinks: false,
     terminalWindowsShell: 'powershell.exe',
     terminalWindowsPowerShellImplementation: 'powershell.exe',
     enableGitHubAttribution: true,
-    ...overrides
+    ...overrides,
+    appFontFamily
   }
 }
 

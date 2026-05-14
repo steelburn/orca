@@ -36,7 +36,7 @@ function buildMenuOptions() {
     onToggleAppearance: vi.fn(),
     getAppearanceState: vi.fn(() => ({
       showTasksButton: true,
-      showTitlebarAgentActivity: true,
+      showTitlebarAppName: true,
       statusBarVisible: true
     }))
   }
@@ -209,7 +209,7 @@ describe('registerAppMenu', () => {
     const options = buildMenuOptions()
     options.getAppearanceState.mockReturnValue({
       showTasksButton: false,
-      showTitlebarAgentActivity: true,
+      showTitlebarAppName: true,
       statusBarVisible: true
     })
     registerAppMenu(options)
@@ -224,9 +224,7 @@ describe('registerAppMenu', () => {
     expect(tasksItem?.type).toBe('checkbox')
     expect(tasksItem?.checked).toBe(false)
 
-    const titlebarItem = appearanceSubmenu.find(
-      (item) => item.label === 'Show Titlebar Agent Activity'
-    )
+    const titlebarItem = appearanceSubmenu.find((item) => item.label === 'Show Titlebar App Name')
     expect(titlebarItem?.checked).toBe(true)
 
     const statusBarItem = appearanceSubmenu.find((item) => item.label === 'Show Status Bar')
@@ -244,8 +242,12 @@ describe('registerAppMenu', () => {
     appearanceSubmenu
       .find((item) => item.label === 'Show Tasks Button')
       ?.click?.({} as never, {} as never, {} as never)
+    appearanceSubmenu
+      .find((item) => item.label === 'Show Titlebar App Name')
+      ?.click?.({} as never, {} as never, {} as never)
 
     expect(options.onToggleAppearance).toHaveBeenCalledWith('showTasksButton')
+    expect(options.onToggleAppearance).toHaveBeenCalledWith('showTitlebarAppName')
   })
 
   it('routes sidebar toggle items through their callbacks', () => {

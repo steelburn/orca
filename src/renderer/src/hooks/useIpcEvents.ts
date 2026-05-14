@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { useAppStore } from '../store'
 import { applyUIZoom } from '@/lib/ui-zoom'
 import { activateAndRevealWorktree } from '@/lib/worktree-activation'
+import { runSleepWorktree } from '@/components/sidebar/sleep-worktree-flow'
 import { SPLIT_TERMINAL_PANE_EVENT, CLOSE_TERMINAL_PANE_EVENT } from '@/constants/terminal'
 import type { SplitTerminalPaneDetail, CloseTerminalPaneDetail } from '@/constants/terminal'
 import { getVisibleWorktreeIds } from '@/components/sidebar/visible-worktrees'
@@ -13,11 +14,25 @@ import type { SshConnectionState } from '../../../shared/ssh-types'
 import { zoomLevelToPercent, ZOOM_MIN, ZOOM_MAX } from '@/components/settings/SettingsConstants'
 import { dispatchZoomLevelChanged } from '@/lib/zoom-events'
 import { resolveZoomTarget } from './resolve-zoom-target'
-import { handleSwitchTab, handleSwitchTerminalTab } from './ipc-tab-switch'
-import { dispatchClearModifierHints } from './useModifierHint'
-import { normalizeAgentStatusPayload } from '../../../shared/agent-status-types'
+import {
+  handleSwitchTab,
+  handleSwitchTabAcrossAllTypes,
+  handleSwitchTerminalTab
+} from './ipc-tab-switch'
+import {
+  normalizeAgentStatusPayload,
+  type AgentStatusIpcPayload
+} from '../../../shared/agent-status-types'
 import { isGitRepoKind } from '../../../shared/repo-kind'
+import { TOGGLE_FLOATING_TERMINAL_EVENT } from '@/lib/floating-terminal'
 import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
+import { focusRuntimeTerminalSurface } from '@/runtime/sync-runtime-graph'
+import { setFitOverride, hydrateOverrides } from '@/lib/pane-manager/mobile-fit-overrides'
+import { setDriverForPty } from '@/lib/pane-manager/mobile-driver-state'
+import { destroyPersistentWebview } from '@/components/browser-pane/webview-registry'
+import { attachMobileMarkdownBridge } from '@/runtime/mobile-markdown-bridge'
+import { detectLanguage } from '@/lib/language-detect'
+import { track } from '@/lib/telemetry'
 
 export { resolveZoomTarget } from './resolve-zoom-target'
 
@@ -26,6 +41,8 @@ const ZOOM_STEP = 0.5
 export function useIpcEvents(): void {
   useEffect(() => {
     const unsubs: (() => void)[] = []
+
+    unsubs.push(attachMobileMarkdownBridge())
 
     unsubs.push(
       window.api.repos.onChanged(() => {
@@ -63,6 +80,18 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
+      window.api.worktrees.onBaseStatus((event) => {
+        useAppStore.getState().updateWorktreeBaseStatus(event)
+      })
+    )
+
+    unsubs.push(
+      window.api.worktrees.onRemoteBranchConflict((event) => {
+        useAppStore.getState().updateWorktreeRemoteBranchConflict(event)
+      })
+    )
+
+    unsubs.push(
       window.api.ui.onOpenSettings(() => {
         useAppStore.getState().openSettingsPage()
       })
@@ -70,7 +99,6 @@ export function useIpcEvents(): void {
 
     unsubs.push(
       window.api.ui.onOpenFeatureTour(() => {
-        dispatchClearModifierHints()
         useAppStore.getState().openModal('feature-wall', { surface: 'help_tour' })
       })
     )
@@ -101,21 +129,18 @@ export function useIpcEvents(): void {
 
     unsubs.push(
       window.api.ui.onToggleLeftSidebar(() => {
-        dispatchClearModifierHints()
         useAppStore.getState().toggleSidebar()
       })
     )
 
     unsubs.push(
       window.api.ui.onToggleRightSidebar(() => {
-        dispatchClearModifierHints()
         useAppStore.getState().toggleRightSidebar()
       })
     )
 
     unsubs.push(
       window.api.ui.onToggleWorktreePalette(() => {
-        dispatchClearModifierHints()
         const store = useAppStore.getState()
         if (store.activeModal === 'worktree-palette') {
           store.closeModal()
@@ -126,8 +151,13 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
+      window.api.ui.onToggleFloatingTerminal(() => {
+        window.dispatchEvent(new CustomEvent(TOGGLE_FLOATING_TERMINAL_EVENT))
+      })
+    )
+
+    unsubs.push(
       window.api.ui.onOpenQuickOpen(() => {
-        dispatchClearModifierHints()
         const store = useAppStore.getState()
         if (store.activeView === 'terminal' && store.activeWorktreeId !== null) {
           store.openModal('quick-open')
@@ -136,7 +166,7 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
-      window.api.ui.onOpenNewWorkspace((tab) => {
+      window.api.ui.onOpenNewWorkspace(() => {
         // Why: mirror the renderer's App.tsx Cmd+N guard — only open the
         // composer when there is at least one real git repo configured, so
         // users on a fresh install don't get a modal with nothing to target.
@@ -144,22 +174,15 @@ export function useIpcEvents(): void {
         if (!store.repos.some((repo) => isGitRepoKind(repo))) {
           return
         }
-        dispatchClearModifierHints()
-        // Why: if the composer is already open, switch tabs in place so
-        // repeated Cmd+N / Cmd+Shift+N presses toggle between Quick and
-        // Create-from without remounting and losing in-flight composer state
-        // (repo pick, note drafts). Opening when closed seeds the initial tab.
         if (store.activeModal === 'new-workspace-composer') {
-          store.setNewWorkspaceComposerTab(tab)
           return
         }
-        store.openModal('new-workspace-composer', { initialTab: tab })
+        store.openModal('new-workspace-composer', { telemetrySource: 'shortcut' })
       })
     )
 
     unsubs.push(
       window.api.ui.onJumpToWorktreeIndex((index) => {
-        dispatchClearModifierHints()
         const store = useAppStore.getState()
         if (store.activeView !== 'terminal') {
           return
@@ -173,7 +196,6 @@ export function useIpcEvents(): void {
 
     unsubs.push(
       window.api.ui.onWorktreeHistoryNavigate((direction) => {
-        dispatchClearModifierHints()
         const store = useAppStore.getState()
         // Why: mirror the button-visibility rule — worktree history navigation
         // is only meaningful in the terminal (worktree) view. Settings/Tasks
@@ -198,7 +220,7 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
-      window.api.ui.onActivateWorktree(({ repoId, worktreeId, setup }) => {
+      window.api.ui.onActivateWorktree(({ repoId, worktreeId, setup, startup }) => {
         void (async () => {
           // Why: fetch worktrees first so the activation helper can resolve
           // the CLI-created worktree via findWorktreeById — it arrived from
@@ -209,7 +231,7 @@ export function useIpcEvents(): void {
           // ones. This records the visit in the back/forward history stack
           // (recordWorktreeVisit), without which the nav buttons would
           // ignore the CLI-driven workspace switch.
-          activateAndRevealWorktree(worktreeId, { setup })
+          activateAndRevealWorktree(worktreeId, { setup, startup })
         })().catch((error) => {
           console.error('Failed to activate CLI-created worktree:', error)
         })
@@ -217,21 +239,75 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
-      window.api.ui.onCreateTerminal(({ worktreeId, command, title }) => {
-        const store = useAppStore.getState()
-        store.setActiveView('terminal')
-        store.setActiveWorktree(worktreeId)
-        const tab = store.createTab(worktreeId)
-        store.setActiveTabType('terminal')
-        store.setActiveTab(tab.id)
-        store.revealWorktreeInSidebar(worktreeId)
-        if (title) {
-          store.setTabCustomTitle(tab.id, title)
+      window.api.ui.onCreateTerminal(
+        ({ requestId, worktreeId, command, title, ptyId, activate, tabId }) => {
+          try {
+            const store = useAppStore.getState()
+            const shouldActivate = activate !== false
+            if (shouldActivate) {
+              store.setActiveView('terminal')
+              store.setActiveWorktree(worktreeId)
+              // Why: CLI-driven terminal focus is a user-initiated worktree switch
+              // and must stamp focus recency for Cmd+J. Doesn't route through
+              // activateAndRevealWorktree because it has custom terminal-creation
+              // logic; see docs/cmd-j-empty-query-ordering.md.
+              store.markWorktreeVisited(worktreeId)
+            }
+            const tab = ptyId
+              ? ((store.tabsByWorktree[worktreeId] ?? []).find(
+                  (candidate) =>
+                    candidate.ptyId === ptyId ||
+                    (store.ptyIdsByTabId[candidate.id] ?? []).includes(ptyId)
+                ) ??
+                store.createTab(worktreeId, undefined, undefined, {
+                  initialPtyId: ptyId,
+                  activate: shouldActivate,
+                  // Why: tabId hint comes from CLI-spawned PTYs whose env
+                  // already has paneKey=`${tabId}:1` baked in. Adopting the
+                  // tab under the same id keeps hook-event attribution working;
+                  // see docs/cli-terminal-hook-pane-key.md.
+                  ...(tabId !== undefined ? { id: tabId } : {})
+                }))
+              : store.createTab(worktreeId)
+            // Why: when an existing tab already owns this ptyId, we reuse it instead of
+            // minting a new one — but the PTY env already carries `paneKey=`${tabId}:1``
+            // from main. If the existing tab id doesn't match the hint, hook attribution
+            // will degrade for that PTY's lifetime. Warn so this is visible during
+            // development; in production this surfaces via `agent_hook_unattributed`.
+            if (tabId !== undefined && tab.id !== tabId) {
+              console.warn(
+                `[onCreateTerminal] tabId hint ${tabId} ignored for ptyId ${ptyId}; existing tab ${tab.id} adopted instead (hook attribution will degrade for this terminal)`
+              )
+            }
+            if (shouldActivate) {
+              store.setActiveTabType('terminal')
+              store.setActiveTab(tab.id)
+              store.revealWorktreeInSidebar(worktreeId)
+            }
+            if (title) {
+              store.setTabCustomTitle(tab.id, title)
+            }
+            if (command) {
+              store.queueTabStartupCommand(tab.id, { command })
+            }
+            if (requestId) {
+              window.api.ui.replyTerminalCreate({
+                requestId,
+                tabId: tab.id,
+                title: title ?? tab.title
+              })
+            }
+          } catch (err) {
+            if (!requestId) {
+              throw err
+            }
+            window.api.ui.replyTerminalCreate({
+              requestId,
+              error: err instanceof Error ? err.message : 'Terminal reveal failed'
+            })
+          }
         }
-        if (command) {
-          store.queueTabStartupCommand(tab.id, { command })
-        }
-      })
+      )
     )
 
     // Why: CLI-driven terminal creation sends a request and waits for the
@@ -251,7 +327,35 @@ export function useIpcEvents(): void {
           }
           store.setActiveView('terminal')
           store.setActiveWorktree(worktreeId)
+          // Why: CLI-driven terminal-create request is user-initiated; stamp
+          // focus recency for Cmd+J. See docs/cmd-j-empty-query-ordering.md.
+          store.markWorktreeVisited(worktreeId)
           const tab = store.createTab(worktreeId)
+          if (data.afterTabId) {
+            const createdUnifiedTab = useAppStore
+              .getState()
+              .unifiedTabsByWorktree[worktreeId]?.find((item) => item.entityId === tab.id)
+            const anchorUnifiedTab = useAppStore
+              .getState()
+              .unifiedTabsByWorktree[worktreeId]?.find((item) => item.id === data.afterTabId)
+            if (
+              createdUnifiedTab &&
+              anchorUnifiedTab &&
+              createdUnifiedTab.groupId === anchorUnifiedTab.groupId
+            ) {
+              const group = useAppStore
+                .getState()
+                .groupsByWorktree[worktreeId]?.find((item) => item.id === createdUnifiedTab.groupId)
+              const order = (group?.tabOrder ?? []).filter((id) => id !== createdUnifiedTab.id)
+              const anchorIndex = order.indexOf(anchorUnifiedTab.id)
+              order.splice(
+                anchorIndex === -1 ? order.length : anchorIndex + 1,
+                0,
+                createdUnifiedTab.id
+              )
+              useAppStore.getState().reorderUnifiedTabs(createdUnifiedTab.groupId, order)
+            }
+          }
           store.setActiveTabType('terminal')
           store.setActiveTab(tab.id)
           store.revealWorktreeInSidebar(worktreeId)
@@ -289,11 +393,65 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(
-      window.api.ui.onFocusTerminal(({ tabId, worktreeId }) => {
+      window.api.ui.onFocusTerminal(({ tabId, worktreeId, leafId }) => {
         const store = useAppStore.getState()
         store.setActiveWorktree(worktreeId)
+        // Why: CLI-driven focus is a user-initiated switch; stamp focus
+        // recency for Cmd+J. See docs/cmd-j-empty-query-ordering.md.
+        store.markWorktreeVisited(worktreeId)
         store.setActiveView('terminal')
         store.setActiveTab(tabId)
+        store.revealWorktreeInSidebar(worktreeId)
+        if (!focusRuntimeTerminalSurface(tabId, leafId)) {
+          focusTerminalTabSurface(tabId)
+        }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onFocusEditorTab(({ tabId, worktreeId }) => {
+        const store = useAppStore.getState()
+        const tab = (store.unifiedTabsByWorktree[worktreeId] ?? []).find(
+          (item) => item.id === tabId
+        )
+        if (!tab) {
+          return
+        }
+        store.setActiveWorktree(worktreeId)
+        store.markWorktreeVisited(worktreeId)
+        store.setActiveView('terminal')
+        store.focusGroup(worktreeId, tab.groupId)
+        store.activateTab(tab.id)
+        store.setActiveFile(tab.entityId)
+        store.setActiveTabType('editor')
+        store.revealWorktreeInSidebar(worktreeId)
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onCloseSessionTab(({ tabId }) => {
+        useAppStore.getState().closeUnifiedTab(tabId)
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onOpenFileFromMobile(({ worktreeId, filePath, relativePath }) => {
+        const store = useAppStore.getState()
+        const basename = relativePath.split(/[\\/]/).pop() || relativePath
+        store.setActiveWorktree(worktreeId)
+        store.markWorktreeVisited(worktreeId)
+        store.setActiveView('terminal')
+        // Why: mobile only sends a desktop-backed path. The renderer owns
+        // editor tab creation so grouped tab order and markdown bridges update
+        // through the same store path as desktop File Explorer.
+        store.openFile({
+          filePath,
+          relativePath,
+          worktreeId,
+          language: detectLanguage(basename),
+          mode: 'edit'
+        })
+        store.setActiveTabType('editor')
         store.revealWorktreeInSidebar(worktreeId)
       })
     )
@@ -309,6 +467,12 @@ export function useIpcEvents(): void {
         } else {
           useAppStore.getState().closeTab(tabId)
         }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onSleepWorktree(({ worktreeId }) => {
+        void runSleepWorktree(worktreeId)
       })
     )
 
@@ -369,6 +533,31 @@ export function useIpcEvents(): void {
       })
     )
 
+    // Why: `orca tab switch --focus` lands here after the bridge's state-only
+    // `tabSwitch`. We deliberately DO NOT call `setActiveWorktree` — multiple
+    // agents drive browsers in parallel worktrees, so a global focus call from
+    // one agent's tab switch would steal the user's view from whichever
+    // worktree they're actually reading. Instead `focusBrowserTabInWorktree`
+    // updates the targeted worktree's per-worktree state in place; globals
+    // (activeBrowserTabId, activeTabType) only flip when the user is already
+    // on the targeted worktree. Cross-worktree --focus calls are silent
+    // pre-staging for whenever the user next visits that worktree.
+    unsubs.push(
+      window.api.browser.onPaneFocus(({ worktreeId, browserPageId }) => {
+        const store = useAppStore.getState()
+        // Why: main sends `worktreeId: null` if the tab closed between the
+        // bridge resolving tabSwitch and getWorktreeIdForTab running. Falling
+        // back to activeWorktreeId means a stale page id in another worktree
+        // is silently ignored by focusBrowserTabInWorktree (page not found
+        // in its tabsForWorktree.find), which is the intended no-op.
+        const targetWt = worktreeId ?? store.activeWorktreeId
+        if (!targetWt) {
+          return
+        }
+        store.focusBrowserTabInWorktree(targetWt, browserPageId)
+      })
+    )
+
     unsubs.push(
       window.api.browser.onOpenLinkInOrcaTab(({ browserPageId, url }) => {
         const store = useAppStore.getState()
@@ -425,7 +614,8 @@ export function useIpcEvents(): void {
 
           const workspace = store.createBrowserTab(worktreeId, data.url, {
             title: data.url,
-            targetGroupId: activeBrowserUnifiedTab?.groupId
+            targetGroupId: activeBrowserUnifiedTab?.groupId,
+            sessionProfileId: data.sessionProfileId
           })
           // Why: registerGuest fires with the page ID (not workspace ID) as
           // browserPageId. Return the page ID so waitForTabRegistration can
@@ -437,6 +627,47 @@ export function useIpcEvents(): void {
           window.api.ui.replyTabCreate({
             requestId: data.requestId,
             error: err instanceof Error ? err.message : 'Tab creation failed'
+          })
+        }
+      })
+    )
+
+    unsubs.push(
+      window.api.ui.onRequestTabSetProfile((data) => {
+        try {
+          const store = useAppStore.getState()
+          const owningWorkspace = Object.values(store.browserTabsByWorktree)
+            .flat()
+            .find((workspace) => {
+              if (workspace.id === data.browserPageId) {
+                return true
+              }
+              const pages = store.browserPagesByWorkspace[workspace.id] ?? []
+              return pages.some((page) => page.id === data.browserPageId)
+            })
+          if (!owningWorkspace) {
+            window.api.ui.replyTabSetProfile({
+              requestId: data.requestId,
+              error: `Browser tab ${data.browserPageId} not found`
+            })
+            return
+          }
+          // Why: a workspace can host multiple browser pages; profile switch must
+          // tear down every sibling webview, not just the one referenced by the IPC.
+          const workspacePages = store.browserPagesByWorkspace[owningWorkspace.id] ?? []
+          if (workspacePages.length > 0) {
+            for (const page of workspacePages) {
+              destroyPersistentWebview(page.id)
+            }
+          } else {
+            destroyPersistentWebview(data.browserPageId)
+          }
+          store.switchBrowserTabProfile(owningWorkspace.id, data.profileId)
+          window.api.ui.replyTabSetProfile({ requestId: data.requestId })
+        } catch (err) {
+          window.api.ui.replyTabSetProfile({
+            requestId: data.requestId,
+            error: err instanceof Error ? err.message : 'Tab profile update failed'
           })
         }
       })
@@ -545,6 +776,7 @@ export function useIpcEvents(): void {
     )
 
     unsubs.push(window.api.ui.onSwitchTab(handleSwitchTab))
+    unsubs.push(window.api.ui.onSwitchTabAcrossAllTypes(handleSwitchTabAcrossAllTypes))
     unsubs.push(window.api.ui.onSwitchTerminalTab(handleSwitchTerminalTab))
 
     // Hydrate initial rate limit state then subscribe to push updates
@@ -761,45 +993,122 @@ export function useIpcEvents(): void {
     // Why: agent status arrives from native hook receivers in the main process.
     // Re-parse it here so the renderer enforces the same normalization rules
     // (state enum, field truncation) regardless of whether the source was a
-    // hook callback or an OSC fallback path. The subscription itself is
-    // unconditional so flipping the experimental dashboard setting takes
-    // effect without re-running this App-mount effect; the per-event guard
-    // inside the handler drops payloads when the setting is off.
+    // hook callback or an OSC fallback path. Startup pushes are ignored until
+    // workspace session hydration finishes; the snapshot pull below replays the
+    // main-process cache after tab identity is available.
+    const applyAgentStatus = (
+      data: AgentStatusIpcPayload,
+      options?: { replay?: boolean }
+    ): void => {
+      const store = useAppStore.getState()
+      if (!store.workspaceSessionReady) {
+        return
+      }
+      const payload = normalizeAgentStatusPayload({
+        state: data.state,
+        prompt: data.prompt,
+        agentType: data.agentType,
+        toolName: data.toolName,
+        toolInput: data.toolInput,
+        lastAssistantMessage: data.lastAssistantMessage,
+        interrupted: data.interrupted
+      })
+      if (!payload) {
+        return
+      }
+      const { exists, title } = resolvePaneKey(store, data.paneKey)
+      if (!exists) {
+        // Why: empty paneKeys are dropped in main before IPC fanout. Reaching
+        // this branch means a non-empty paneKey escaped without a matching
+        // renderer tab, so track the adoption/routing failure separately.
+        // Skipped during snapshot replay because main's durable cache may
+        // include entries whose tabs were closed before this session — that
+        // reconciliation miss is not a regression signal.
+        if (options?.replay !== true) {
+          track('agent_hook_unattributed', { reason: 'unknown_tab_id' })
+        }
+        return
+      }
+      store.setAgentStatus(data.paneKey, payload, title, {
+        updatedAt: data.receivedAt,
+        stateStartedAt: data.stateStartedAt
+      })
+    }
+
+    let snapshotRequestedForReadyWindow = false
+    let snapshotRequestId = 0
+    const requestAgentStatusSnapshotIfReady = (): void => {
+      const store = useAppStore.getState()
+      if (!store.workspaceSessionReady) {
+        snapshotRequestedForReadyWindow = false
+        return
+      }
+      if (snapshotRequestedForReadyWindow) {
+        return
+      }
+      const getSnapshot = window.api.agentStatus.getSnapshot
+      if (typeof getSnapshot !== 'function') {
+        return
+      }
+      snapshotRequestedForReadyWindow = true
+      const requestId = ++snapshotRequestId
+      void getSnapshot()
+        .then((entries) => {
+          if (requestId !== snapshotRequestId) {
+            return
+          }
+          const current = useAppStore.getState()
+          if (!current.workspaceSessionReady) {
+            return
+          }
+          for (const entry of entries) {
+            applyAgentStatus(entry, { replay: true })
+          }
+        })
+        .catch((err) => {
+          // Why: keep snapshotRequestedForReadyWindow latched on failure. The
+          // store subscriber below fires on every update (including high-rate
+          // PTY ticks), so resetting the flag here would turn a persistent IPC
+          // failure into an unbounded retry storm. One warning per ready
+          // window is sufficient; the flag still clears when
+          // workspaceSessionReady toggles off, so a fresh workspace re-ready
+          // cycle will retry.
+          console.warn('[agent-status] failed to load startup snapshot:', err)
+        })
+    }
+
     unsubs.push(
       window.api.agentStatus.onSet((data) => {
-        const store = useAppStore.getState()
-        if (store.settings?.experimentalAgentDashboard !== true) {
-          return
-        }
-        // Why: the IPC payload is already a structured object — pass it
-        // straight to the object-input normalizer instead of round-tripping
-        // through JSON.stringify/JSON.parse. Hook events can fire many times
-        // per second during a tool-use run, so this avoids the per-event
-        // serialization cost.
-        const payload = normalizeAgentStatusPayload({
-          state: data.state,
-          prompt: data.prompt,
-          agentType: data.agentType,
-          toolName: data.toolName,
-          toolInput: data.toolInput,
-          lastAssistantMessage: data.lastAssistantMessage,
-          interrupted: data.interrupted
-        })
-        if (!payload) {
-          return
-        }
-        // Why: resolve tab existence and terminal title in a single pass.
-        // Previously the code walked store.tabsByWorktree twice — once to
-        // look up the tab-level title (when the pane-level title was
-        // missing) and again for the explicit tabExists check. A paneKey
-        // that no longer resolves to a live tab belongs to a pane that has
-        // already been torn down; dropping here prevents orphan entries
-        // from accumulating in agentStatusByPaneKey.
-        const { exists, title } = resolvePaneKey(store, data.paneKey)
-        if (!exists) {
-          return
-        }
-        store.setAgentStatus(data.paneKey, payload, title)
+        applyAgentStatus(data)
+      })
+    )
+
+    // Why: the main hook server is the durable source of truth. Pull a
+    // snapshot only after workspace tabs are ready, so early startup pushes
+    // can be safely ignored instead of buffered against partially hydrated
+    // renderer state.
+    requestAgentStatusSnapshotIfReady()
+    unsubs.push(useAppStore.subscribe(() => requestAgentStatusSnapshotIfReady()))
+
+    // Why: hydrate mobile-fit overrides before terminal panes run their first
+    // attach/fit logic, so a renderer reload doesn't undo active mobile fits.
+    void window.api.runtime.getTerminalFitOverrides().then((overrides) => {
+      hydrateOverrides(overrides)
+    })
+
+    unsubs.push(
+      window.api.runtime.onTerminalFitOverrideChanged((event) => {
+        setFitOverride(event.ptyId, event.mode, event.cols, event.rows)
+      })
+    )
+
+    unsubs.push(
+      // Why: presence-lock driver state mirror. Updates the renderer's
+      // mobile-driver-state map so TerminalPane / pty-connection guards
+      // know which PTYs are currently driven by mobile. See
+      // docs/mobile-presence-lock.md.
+      window.api.runtime.onTerminalDriverChanged((event) => {
+        setDriverForPty(event.ptyId, event.driver)
       })
     )
 

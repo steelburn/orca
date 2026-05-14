@@ -5,6 +5,7 @@ import { useAppStore } from '../../store'
 import TabGroupPanel from './TabGroupPanel'
 import TabDragPreview from '../tab-bar/TabDragPreview'
 import { type HoveredTabInsertion, type TabDropZone, useTabDragSplit } from './useTabDragSplit'
+import type { ActivityTerminalPortalTarget } from '../activity/activity-terminal-portal'
 
 const MIN_RATIO = 0.15
 const MAX_RATIO = 0.85
@@ -95,7 +96,8 @@ function SplitNode({
   isTabDragActive,
   activeDropGroupId,
   activeDropZone,
-  hoveredTabInsertion
+  hoveredTabInsertion,
+  activityTerminalPortals
 }: {
   node: TabGroupLayoutNode
   nodePath: string
@@ -110,6 +112,7 @@ function SplitNode({
   activeDropGroupId: string | null
   activeDropZone: TabDropZone | null
   hoveredTabInsertion: HoveredTabInsertion | null
+  activityTerminalPortals: ActivityTerminalPortalTarget[]
 }): React.JSX.Element {
   const setTabGroupSplitRatio = useAppStore((state) => state.setTabGroupSplitRatio)
 
@@ -134,6 +137,7 @@ function SplitNode({
         hoveredTabInsertion={
           hoveredTabInsertion?.groupId === node.groupId ? hoveredTabInsertion : null
         }
+        activityTerminalPortals={activityTerminalPortals}
       />
     )
   }
@@ -161,6 +165,7 @@ function SplitNode({
           activeDropGroupId={activeDropGroupId}
           activeDropZone={activeDropZone}
           hoveredTabInsertion={hoveredTabInsertion}
+          activityTerminalPortals={activityTerminalPortals}
         />
       </div>
       <ResizeHandle
@@ -182,6 +187,7 @@ function SplitNode({
           activeDropGroupId={activeDropGroupId}
           activeDropZone={activeDropZone}
           hoveredTabInsertion={hoveredTabInsertion}
+          activityTerminalPortals={activityTerminalPortals}
         />
       </div>
     </div>
@@ -192,12 +198,14 @@ export default function TabGroupSplitLayout({
   layout,
   worktreeId,
   focusedGroupId,
-  isWorktreeActive
+  isWorktreeActive,
+  activityTerminalPortals = []
 }: {
   layout: TabGroupLayoutNode
   worktreeId: string
   focusedGroupId?: string
   isWorktreeActive: boolean
+  activityTerminalPortals?: ActivityTerminalPortalTarget[]
 }): React.JSX.Element {
   const dragSplit = useTabDragSplit({ worktreeId, enabled: isWorktreeActive })
   const hasSplits = layout.type === 'split'
@@ -223,9 +231,11 @@ export default function TabGroupSplitLayout({
           window-drag region at the top. Only the split layout's own panes
           own the resize handles, while this strip keeps the whole top of the
           center column draggable regardless of how the splits are arranged.
-          Why 10px specifically: pairs with the 32px tab row below so the
-          total top-band is 42px, matching the sibling `titlebar-left` above
-          the sidebar. Without this, the tab row's bottom border falls short
+          Why 4px specifically: pairs with the 32px tab row below so the
+          total top-band is 36px, matching the sibling `titlebar-left` above
+          the sidebar. Keep this small — it's just enough drag surface above
+          the tabs without opening a visible gap between the window top and
+          the tab chrome. Without this, the tab row's bottom border falls short
           of the sidebar header's and the seam between columns reads as off.
           Why `border-l` on the wrapper: paint the single full-height divider
           between the left sidebar and the terminal area, regardless of split
@@ -234,7 +244,7 @@ export default function TabGroupSplitLayout({
           both painted and stacked into a 2px bar below the drag strip. */}
       <div className="flex flex-col flex-1 min-w-0 min-h-0 overflow-hidden border-l border-border">
         <div
-          className="h-[10px] shrink-0 bg-card"
+          className="h-[4px] shrink-0 bg-card"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         />
         <div className="flex flex-1 min-w-0 min-h-0 overflow-hidden">
@@ -252,6 +262,7 @@ export default function TabGroupSplitLayout({
             activeDropGroupId={dragSplit.hoveredDropTarget?.groupId ?? null}
             activeDropZone={dragSplit.hoveredDropTarget?.zone ?? null}
             hoveredTabInsertion={dragSplit.hoveredTabInsertion}
+            activityTerminalPortals={activityTerminalPortals}
           />
         </div>
       </div>

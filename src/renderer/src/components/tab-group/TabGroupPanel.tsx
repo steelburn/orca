@@ -1,4 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { useDroppable } from '@dnd-kit/core'
 import { Columns2, Ellipsis, Rows2, X } from 'lucide-react'
 import { useAppStore } from '../../store'
@@ -14,11 +15,16 @@ import TerminalPane from '../terminal-pane/TerminalPane'
 import { browserSlotAnchorName } from '../browser-pane/browser-pane-slots'
 import { useTabGroupWorkspaceModel } from './useTabGroupWorkspaceModel'
 import TabGroupDropOverlay from './TabGroupDropOverlay'
+import { resolveGroupTabFromVisibleId } from './tab-group-visible-id'
 import {
   getTabPaneBodyDroppableId,
   type HoveredTabInsertion,
   type TabDropZone
 } from './useTabDragSplit'
+import {
+  findActivityTerminalPortal,
+  type ActivityTerminalPortalTarget
+} from '../activity/activity-terminal-portal'
 
 const EditorPanel = lazy(() => import('../editor/EditorPanel'))
 
@@ -34,7 +40,8 @@ export default function TabGroupPanel({
   reserveCollapsedSidebarHeaderSpace,
   isTabDragActive = false,
   activeDropZone = null,
-  hoveredTabInsertion = null
+  hoveredTabInsertion = null,
+  activityTerminalPortals = []
 }: {
   groupId: string
   worktreeId: string
@@ -48,6 +55,7 @@ export default function TabGroupPanel({
   isTabDragActive?: boolean
   activeDropZone?: TabDropZone | null
   hoveredTabInsertion?: HoveredTabInsertion | null
+  activityTerminalPortals?: ActivityTerminalPortalTarget[]
 }): React.JSX.Element {
   const rightSidebarOpen = useAppStore((state) => state.rightSidebarOpen)
   const sidebarOpen = useAppStore((state) => state.sidebarOpen)
@@ -109,18 +117,17 @@ export default function TabGroupPanel({
           commands.closeItem(item.id)
         }
       }}
-      onCloseOthers={(terminalId) => {
-        const item = model.groupTabs.find(
-          (candidate) => candidate.entityId === terminalId && candidate.contentType === 'terminal'
-        )
+      onCloseOthers={(visibleId) => {
+        // Why: TabBar emits this with the entityId for terminals/browsers and
+        // the unifiedTabId for editors (see TabBar's per-type wiring). Match
+        // both so the menu works on every tab kind, not just terminals.
+        const item = resolveGroupTabFromVisibleId(model.groupTabs, visibleId)
         if (item) {
           commands.closeOthers(item.id)
         }
       }}
-      onCloseToRight={(terminalId) => {
-        const item = model.groupTabs.find(
-          (candidate) => candidate.entityId === terminalId && candidate.contentType === 'terminal'
-        )
+      onCloseToRight={(visibleId) => {
+        const item = resolveGroupTabFromVisibleId(model.groupTabs, visibleId)
         if (item) {
           commands.closeToRight(item.id)
         }
@@ -323,14 +330,21 @@ export default function TabGroupPanel({
           </div>
           {/* Why: Electron's native drag hit-test ignores z-index — a no-drag
               element only overrides drag when it's a DOM descendant, not a
-              sibling in another branch. The floating right-sidebar toggle in
-              App.tsx sits in a separate DOM tree, so we need an explicit
-              no-drag child here to punch a hole in the drag surface beneath it
-              and let clicks through to the toggle. */}
+              sibling in another branch. The floating right-sidebar toggle and
+              the fixed-position window-controls overlay on Windows both sit in
+              separate DOM trees, so we need an explicit no-drag child here to
+              punch holes in the drag surface beneath them. The sidebar toggle
+              is 40px (w-10); window controls add --window-controls-width
+              (138px on Windows, 0px elsewhere) on top. */}
           {reserveClosedExplorerToggleSpace && !rightSidebarOpen ? (
             <div
-              className="shrink-0 w-10"
-              style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+              className="shrink-0"
+              style={
+                {
+                  width: 'calc(40px + var(--window-controls-width, 0px))',
+                  WebkitAppRegion: 'no-drag'
+                } as React.CSSProperties
+              }
             />
           ) : null}
         </div>
@@ -344,36 +358,51 @@ export default function TabGroupPanel({
         {activeDropZone ? <TabGroupDropOverlay zone={activeDropZone} /> : null}
         {model.groupTabs
           .filter((item) => item.contentType === 'terminal')
-          .map((item) => (
-            <TerminalPane
-              key={`${item.entityId}-${runtimeTerminalTabById.get(item.entityId)?.generation ?? 0}`}
-              tabId={item.entityId}
-              worktreeId={worktreeId}
-              cwd={worktreePath}
-              isActive={
-                isFocused && activeTab?.id === item.id && activeTab.contentType === 'terminal'
-              }
-              // Why: in multi-group splits, the active terminal in each group
-              // must remain visible (display:flex) so the user sees its output,
-              // but only the focused group's terminal should receive keyboard
-              // input. Hidden worktrees stay mounted offscreen, so `isVisible`
-              // must also respect worktree visibility or those detached panes
-              // keep their WebGL renderers alive and exhaust Chromium's context
-              // budget across worktrees.
-              isVisible={
-                isWorktreeActive &&
-                activeTab?.id === item.id &&
-                activeTab.contentType === 'terminal'
-              }
-              onPtyExit={(ptyId) => {
-                if (commands.consumeSuppressedPtyExit(ptyId)) {
-                  return
-                }
-                commands.closeItem(item.id)
-              }}
-              onCloseTab={() => commands.closeItem(item.id)}
-            />
-          ))}
+          .map((item) => {
+            const activityTerminalPortal = findActivityTerminalPortal(
+              activityTerminalPortals,
+              worktreeId,
+              item.entityId
+            )
+            const isActivityPortalTab = activityTerminalPortal !== null
+            const isActiveTerminalTab =
+              isFocused && activeTab?.id === item.id && activeTab.contentType === 'terminal'
+            const isVisibleTerminalTab =
+              isWorktreeActive && activeTab?.id === item.id && activeTab.contentType === 'terminal'
+            const terminalPane = (
+              <TerminalPane
+                key={`${item.entityId}-${runtimeTerminalTabById.get(item.entityId)?.generation ?? 0}`}
+                tabId={item.entityId}
+                worktreeId={worktreeId}
+                cwd={worktreePath}
+                isActive={isActiveTerminalTab || activityTerminalPortal?.active === true}
+                // Why: the Activity page shows the selected agent's existing
+                // terminal while the workspace group stays hidden. The portaled
+                // tab must still be visible so xterm fits against the activity
+                // pane and continues foreground output scheduling.
+                isVisible={isVisibleTerminalTab || isActivityPortalTab}
+                // Why: when portaled to Activity for a specific agent pane,
+                // isolate that leaf so split siblings stay hidden. Workspace
+                // renders pass null → no override.
+                isolatedPaneId={activityTerminalPortal?.paneId ?? null}
+                onPtyExit={(ptyId) => {
+                  if (commands.consumeSuppressedPtyExit(ptyId)) {
+                    return
+                  }
+                  commands.closeItem(item.id)
+                }}
+                onCloseTab={() => commands.closeItem(item.id)}
+              />
+            )
+            if (activityTerminalPortal) {
+              return createPortal(
+                terminalPane,
+                activityTerminalPortal.target,
+                `activity-terminal-${item.entityId}`
+              )
+            }
+            return terminalPane
+          })}
 
         {activeTab &&
           activeTab.contentType !== 'terminal' &&
