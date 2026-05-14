@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fetchClaudeRateLimits } from './claude-fetcher'
+import { fetchViaPty } from './claude-pty'
 import { readActiveClaudeKeychainCredentialsStrict } from '../claude-accounts/keychain'
 import type { ClaudeRuntimeAuthPreparation } from '../claude-accounts/runtime-auth-service'
 
@@ -60,6 +61,14 @@ describe('fetchClaudeRateLimits', () => {
         { status: 200 }
       )
     )
+    vi.mocked(fetchViaPty).mockResolvedValue({
+      provider: 'claude',
+      session: { usedPercent: 56, windowMinutes: 300, resetsAt: null, resetDescription: null },
+      weekly: null,
+      updatedAt: 1,
+      error: null,
+      status: 'ok'
+    })
   })
 
   afterEach(() => {
@@ -80,6 +89,14 @@ describe('fetchClaudeRateLimits', () => {
       JSON.stringify({
         claudeAiOauth: {
           accessToken: 'oauth-token',
+          expiresAt: Date.now() + 60_000
+        }
+      })
+    )
+    readFileMock.mockResolvedValue(
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: 'file-oauth-token',
           expiresAt: Date.now() + 60_000
         }
       })
@@ -173,5 +190,34 @@ describe('fetchClaudeRateLimits', () => {
         })
       })
     )
+  })
+
+  it('tries PTY usage when OAuth credentials are expired but refreshable', async () => {
+    const configDir = '/Users/test/.claude'
+    const authPreparation: ClaudeRuntimeAuthPreparation = {
+      configDir,
+      envPatch: {},
+      stripAuthEnv: false,
+      provenance: 'system'
+    }
+    vi.mocked(readActiveClaudeKeychainCredentialsStrict).mockResolvedValueOnce(
+      JSON.stringify({
+        claudeAiOauth: {
+          accessToken: 'expired-oauth-token',
+          refreshToken: 'refresh-token',
+          expiresAt: Date.now() - 60_000
+        }
+      })
+    )
+
+    await expect(fetchClaudeRateLimits({ authPreparation })).resolves.toMatchObject({
+      provider: 'claude',
+      status: 'ok',
+      session: { usedPercent: 56 }
+    })
+
+    expect(netFetchMock).not.toHaveBeenCalled()
+    expect(readFileMock).not.toHaveBeenCalled()
+    expect(fetchViaPty).toHaveBeenCalledWith({ authPreparation })
   })
 })

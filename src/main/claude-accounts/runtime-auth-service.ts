@@ -175,14 +175,14 @@ export class ClaudeRuntimeAuthService {
       console.warn(
         '[claude-runtime-auth] Active managed account is missing or has invalid credentials, restoring system default'
       )
-      this.store.updateSettings({ activeClaudeManagedAccountId: null })
       if (this.lastSyncedAccountId !== null) {
         await this.restoreSystemDefaultSnapshotForMissingManagedCredentials(
           activeAccount,
           this.readManagedOauthAccount(activeAccount)
         )
-        this.lastSyncedAccountId = null
       }
+      this.store.updateSettings({ activeClaudeManagedAccountId: null })
+      this.lastSyncedAccountId = null
       return
     }
 
