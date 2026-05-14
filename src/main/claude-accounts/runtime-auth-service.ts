@@ -283,6 +283,9 @@ export class ClaudeRuntimeAuthService {
       }[] = []
       let sawAmbiguousCandidate = false
       for (const runtimeContents of changedCandidates) {
+        if (!this.isValidCredentialsJsonObject(runtimeContents)) {
+          continue
+        }
         const match = await this.findManagedAccountForRuntimeCredentials(runtimeContents)
         if (match.kind === 'ambiguous') {
           sawAmbiguousCandidate = true
@@ -475,7 +478,9 @@ export class ClaudeRuntimeAuthService {
 
   private isValidCredentialsJsonObject(credentialsJson: string): boolean {
     try {
-      return this.asRecord(JSON.parse(credentialsJson)) !== null
+      const parsed = this.asRecord(JSON.parse(credentialsJson))
+      const oauth = this.asRecord(parsed?.claudeAiOauth)
+      return this.normalizeField(this.readString(oauth, 'accessToken')) !== null
     } catch {
       return false
     }
