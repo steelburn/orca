@@ -41,7 +41,6 @@ import {
 // force review against the no-identify invariant.
 type MockPostHog = {
   capture: ReturnType<typeof vi.fn>
-  getFeatureFlagResult: ReturnType<typeof vi.fn>
   optIn: ReturnType<typeof vi.fn>
   optOut: ReturnType<typeof vi.fn>
   shutdown: ReturnType<typeof vi.fn>
@@ -66,7 +65,6 @@ function makeMockPostHog(): MockPostHog {
         })
       })
     }),
-    getFeatureFlagResult: vi.fn(),
     optIn: vi.fn(async () => {}),
     optOut: vi.fn(async () => {}),
     shutdown: vi.fn(async () => {}),

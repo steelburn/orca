@@ -77,7 +77,6 @@ import type {
 } from '../shared/ssh-types'
 import type { AgentStatusIpcPayload } from '../shared/agent-status-types'
 import type { TelemetryConsentState } from '../shared/telemetry-consent-types'
-import type { FeatureFlagKey, FeatureFlagResolution } from '../shared/feature-flags'
 import type { RefreshAgentsResult } from './api-types'
 import type { AgentKind, LaunchSource, RequestKind } from '../shared/telemetry-events'
 import {
@@ -887,11 +886,6 @@ const api = {
     ipcRenderer.invoke('telemetry:acknowledgeBanner'),
   telemetryGetConsentState: (): Promise<TelemetryConsentState> =>
     ipcRenderer.invoke('telemetry:getConsentState'),
-
-  featureFlags: {
-    get: (key: FeatureFlagKey): Promise<FeatureFlagResolution | null> =>
-      ipcRenderer.invoke('feature-flags:get', key)
-  },
 
   settings: {
     get: (): Promise<unknown> => ipcRenderer.invoke('settings:get'),

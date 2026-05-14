@@ -37,7 +37,7 @@ const NAVIGATION_KEYS = new Set<string>([
 ])
 
 function isFeatureWallSurface(value: unknown): value is FeatureWallSurface {
-  return value === 'chip' || value === 'help_tour'
+  return value === 'help_tour'
 }
 
 function toAssetUrl(baseUrl: string | null, assetPath: string): string | null {

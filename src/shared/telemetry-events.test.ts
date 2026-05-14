@@ -11,8 +11,6 @@ import {
   commonPropsSchema,
   errorClassSchema,
   eventSchemas,
-  featureChipEligibilityStepSchema,
-  featureWallChipFlagVariantSchema,
   featureWallSurfaceSchema,
   featureWallTileIdSchema,
   SETTINGS_CHANGED_WHITELIST,
@@ -215,30 +213,6 @@ describe('settings_changed schema', () => {
 })
 
 describe('feature wall schemas', () => {
-  it('accepts chip eligibility and interaction payloads', () => {
-    expect(
-      eventSchemas.feature_chip_eligibility_step.safeParse({ step: 'cooldown_passed' }).success
-    ).toBe(true)
-    expect(eventSchemas.feature_chip_eligible.safeParse({ flag_variant: 'enabled' }).success).toBe(
-      true
-    )
-    expect(eventSchemas.feature_chip_shown.safeParse({ is_second_chance: false }).success).toBe(
-      true
-    )
-    expect(eventSchemas.feature_chip_clicked.safeParse({ is_second_chance: true }).success).toBe(
-      true
-    )
-    expect(eventSchemas.feature_chip_dismissed.safeParse({ is_second_chance: true }).success).toBe(
-      true
-    )
-  })
-
-  it('rejects unknown chip flag variants', () => {
-    expect(
-      eventSchemas.feature_chip_eligible.safeParse({ flag_variant: 'variant-b' }).success
-    ).toBe(false)
-  })
-
   it('accepts the Help-menu open and close payloads', () => {
     expect(eventSchemas.feature_wall_opened.safeParse({ surface: 'help_tour' }).success).toBe(true)
     expect(
@@ -346,7 +320,5 @@ describe('exported enum schemas', () => {
   it('feature wall enum schemas accept known values', () => {
     expect(featureWallSurfaceSchema.safeParse('help_tour').success).toBe(true)
     expect(featureWallTileIdSchema.safeParse('tile-01').success).toBe(true)
-    expect(featureWallChipFlagVariantSchema.safeParse('network_error').success).toBe(true)
-    expect(featureChipEligibilityStepSchema.safeParse('deferred_modal_open').success).toBe(true)
   })
 })

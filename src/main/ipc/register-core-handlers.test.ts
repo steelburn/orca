@@ -14,7 +14,6 @@ const {
   registerComputerUsePermissionHandlersMock,
   registerSettingsHandlersMock,
   registerTelemetryHandlersMock,
-  registerFeatureFlagHandlersMock,
   registerShellHandlersMock,
   registerPetHandlersMock,
   registerSessionHandlersMock,
@@ -50,7 +49,6 @@ const {
   registerComputerUsePermissionHandlersMock: vi.fn(),
   registerSettingsHandlersMock: vi.fn(),
   registerTelemetryHandlersMock: vi.fn(),
-  registerFeatureFlagHandlersMock: vi.fn(),
   registerShellHandlersMock: vi.fn(),
   registerPetHandlersMock: vi.fn(),
   registerSessionHandlersMock: vi.fn(),
@@ -132,10 +130,6 @@ vi.mock('./settings', () => ({
 
 vi.mock('./telemetry', () => ({
   registerTelemetryHandlers: registerTelemetryHandlersMock
-}))
-
-vi.mock('./feature-flags', () => ({
-  registerFeatureFlagHandlers: registerFeatureFlagHandlersMock
 }))
 
 vi.mock('./shell', () => ({
@@ -222,7 +216,6 @@ describe('registerCoreHandlers', () => {
     registerComputerUsePermissionHandlersMock.mockReset()
     registerSettingsHandlersMock.mockReset()
     registerTelemetryHandlersMock.mockReset()
-    registerFeatureFlagHandlersMock.mockReset()
     registerShellHandlersMock.mockReset()
     registerPetHandlersMock.mockReset()
     registerSessionHandlersMock.mockReset()
@@ -283,7 +276,6 @@ describe('registerCoreHandlers', () => {
     expect(registerComputerUsePermissionHandlersMock).toHaveBeenCalled()
     expect(registerSettingsHandlersMock).toHaveBeenCalledWith(store)
     expect(registerTelemetryHandlersMock).toHaveBeenCalledWith(store)
-    expect(registerFeatureFlagHandlersMock).toHaveBeenCalled()
     expect(registerSessionHandlersMock).toHaveBeenCalledWith(store)
     expect(registerUIHandlersMock).toHaveBeenCalledWith(store)
     expect(registerFilesystemHandlersMock).toHaveBeenCalledWith(store)

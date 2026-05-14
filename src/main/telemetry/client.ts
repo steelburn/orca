@@ -17,9 +17,8 @@
 //                             boolean. Env-var / CI / opt-out all funnel
 //                             through here.
 //   4. validator            — schema-level safeParse. Fail-closed.
-//   5. posthog.capture      — the only event-emission call into the vendor
-//                             SDK. Feature flag reads use getFeatureFlagResult
-//                             separately and return control on failure.
+//   5. posthog.capture      — the only place this module calls into the
+//                             vendor SDK.
 //
 // `$process_person_profile: false` is attached on every capture because
 // posthog-node has no init-time equivalent of posthog-js's
@@ -31,13 +30,11 @@ import { randomUUID } from 'node:crypto'
 import { arch as osArch, platform as osPlatform, release as osRelease } from 'node:os'
 import { app } from 'electron'
 import { PostHog } from 'posthog-node'
-import type { FeatureFlagKey, FeatureFlagResolution } from '../../shared/feature-flags'
 import type { CommonProps, EventName, EventProps, OptInVia } from '../../shared/telemetry-events'
 import type { Store } from '../persistence'
 import { consumeBurstToken, resetBurstCapsForSession } from './burst-cap'
 import { getCohortAtEmit } from './cohort-classifier'
 import { resolveConsent, type ConsentState } from './consent'
-import { createFeatureFlagResolver } from './feature-flags'
 import { commonPropsSchema, validate } from './validator'
 
 // Compile-time feature flag. PR 2 shipped with this `false` so the SDK was
@@ -95,12 +92,6 @@ const OPT_OUT_CAPTURE_ENQUEUE_TIMEOUT_MS = 1_000
 // `false` in production; an accidental call from non-test code would still
 // be bounded by `resolveConsent` + the validator.
 let testTransportEnabled = false
-const featureFlags = createFeatureFlagResolver({
-  getPostHog: () => posthog,
-  getCommonProps: () => commonProps,
-  getStore: () => storeRef,
-  isTransportAvailable: () => testTransportEnabled || (IS_OFFICIAL_BUILD && TELEMETRY_ENABLED)
-})
 
 // First-launch `app_opened` session gate. The existing-user banner contract is:
 // no events transmit until the notice resolves. Keep "mark" and "emit"
@@ -130,7 +121,6 @@ export function initTelemetry(store: Store): void {
   // disk on a contributor laptop, not just on official builds.
   storeRef = store
   resetBurstCapsForSession()
-  featureFlags.resetCache()
   shuttingDown = false
   // Gate reset per session: the "no app_opened until banner resolution"
   // invariant is per-launch, not across the lifetime of the install.
@@ -320,10 +310,6 @@ export function track<N extends EventName>(name: N, props: EventProps<N>): void 
   })
 }
 
-export function getFeatureFlag(key: FeatureFlagKey): Promise<FeatureFlagResolution> {
-  return featureFlags.getFeatureFlag(key)
-}
-
 export async function setOptIn(via: OptInVia, optedIn: boolean): Promise<void> {
   if (!storeRef) {
     return
@@ -503,10 +489,6 @@ export function _getSessionIdForTests(): string | null {
 
 export function _enableTransportForTests(enabled: boolean): void {
   testTransportEnabled = enabled
-}
-
-export function _resetFeatureFlagCacheForTests(): void {
-  featureFlags.resetCache()
 }
 
 export function _resetFirstAppOpenedFiredForTests(): void {

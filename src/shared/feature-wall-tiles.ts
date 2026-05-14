@@ -1,4 +1,4 @@
-export type FeatureWallSurface = 'chip' | 'help_tour'
+export type FeatureWallSurface = 'help_tour'
 
 export type FeatureWallTileId =
   | 'tile-01'

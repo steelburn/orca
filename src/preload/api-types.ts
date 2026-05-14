@@ -170,7 +170,6 @@ import type {
 } from '../shared/codex-usage-types'
 import type { TelemetryConsentState } from '../shared/telemetry-consent-types'
 import type { AgentKind, LaunchSource, RequestKind } from '../shared/telemetry-events'
-import type { FeatureFlagKey, FeatureFlagResolution } from '../shared/feature-flags'
 
 export type BrowserApi = {
   registerGuest: (args: {
@@ -763,12 +762,6 @@ export type PreloadApi = {
    *  intervene). Subject to the same per-session consent-mutation rate
    *  limit as `telemetrySetOptIn`. */
   telemetryAcknowledgeBanner: () => Promise<void>
-  featureFlags: {
-    /** Resolve a known PostHog feature flag in main. Unknown keys are
-     *  rejected at the IPC handler; renderer code should use the typed
-     *  wrapper in `src/renderer/src/lib/feature-flags.ts`. */
-    get: (key: FeatureFlagKey) => Promise<FeatureFlagResolution | null>
-  }
   settings: {
     get: () => Promise<GlobalSettings>
     set: (args: Partial<GlobalSettings>) => Promise<GlobalSettings>

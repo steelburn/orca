@@ -20,8 +20,9 @@ const DEST_ROOT = path.join(ROOT, 'resources', 'onboarding', 'feature-wall')
 const TILES = [
   {
     id: 'tile-01',
-    gifRelativePath: 'public/whats-new/agent-statuses.gif',
-    posterRelativePath: 'public/whats-new/posters/agent-statuses.jpg'
+    sourceRoot: ROOT,
+    gifRelativePath: 'docs/assets/feature-wall/parallel-worktrees.gif',
+    posterRelativePath: 'docs/assets/feature-wall/parallel-worktrees.jpg'
   },
   {
     id: 'tile-02',
@@ -75,19 +76,21 @@ const TILES = [
   }
 ]
 
-function gitRecordedAtSeconds(marketingRelativePath) {
-  const result = spawnSync('git', ['log', '--format=%at', '-1', '--', marketingRelativePath], {
-    cwd: MARKETING_REPO,
+function sourceRootForTile(tile) {
+  return tile.sourceRoot ?? MARKETING_REPO
+}
+
+function gitRecordedAtSeconds(tile, relativePath) {
+  const result = spawnSync('git', ['log', '--format=%at', '-1', '--', relativePath], {
+    cwd: sourceRootForTile(tile),
     encoding: 'utf8'
   })
   if (result.status !== 0) {
-    throw new Error(
-      `git log failed for ${marketingRelativePath}: ${result.stderr || result.stdout}`
-    )
+    throw new Error(`git log failed for ${relativePath}: ${result.stderr || result.stdout}`)
   }
   const value = result.stdout.trim()
   if (!value) {
-    throw new Error(`No git history found for ${marketingRelativePath}`)
+    throw new Error(`No git history found for ${relativePath}`)
   }
   return Number(value)
 }
@@ -95,11 +98,12 @@ function gitRecordedAtSeconds(marketingRelativePath) {
 await mkdir(DEST_ROOT, { recursive: true })
 
 for (const tile of TILES) {
-  const sourceGif = path.join(MARKETING_REPO, ...tile.gifRelativePath.split('/'))
-  const sourcePoster = path.join(MARKETING_REPO, ...tile.posterRelativePath.split('/'))
+  const sourceRoot = sourceRootForTile(tile)
+  const sourceGif = path.join(sourceRoot, ...tile.gifRelativePath.split('/'))
+  const sourcePoster = path.join(sourceRoot, ...tile.posterRelativePath.split('/'))
   const destGif = path.join(DEST_ROOT, `${tile.id}.gif`)
   const destPoster = path.join(DEST_ROOT, `${tile.id}.poster.jpg`)
-  const recordedAtSeconds = gitRecordedAtSeconds(tile.gifRelativePath)
+  const recordedAtSeconds = gitRecordedAtSeconds(tile, tile.gifRelativePath)
 
   await copyFile(sourceGif, destGif)
   await copyFile(sourcePoster, destPoster)
@@ -109,7 +113,6 @@ for (const tile of TILES) {
       {
         recordedAtUnixSeconds: recordedAtSeconds,
         recordedAtIso: new Date(recordedAtSeconds * 1000).toISOString(),
-        marketingRepo: MARKETING_REPO,
         sourceGif: tile.gifRelativePath,
         sourcePoster: tile.posterRelativePath
       },
