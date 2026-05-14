@@ -153,6 +153,7 @@ describe('useIpcEvents updater integration', () => {
         },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -362,6 +363,7 @@ describe('useIpcEvents updater integration', () => {
         },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -579,6 +581,7 @@ describe('useIpcEvents updater integration', () => {
         },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -863,6 +866,7 @@ describe('useIpcEvents browser tab close routing', () => {
         },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -1067,6 +1071,7 @@ describe('useIpcEvents browser tab close routing', () => {
         },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -1266,6 +1271,7 @@ describe('useIpcEvents browser tab close routing', () => {
         },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -1474,6 +1480,7 @@ describe('useIpcEvents CLI-created worktree activation', () => {
         },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
@@ -1672,6 +1679,7 @@ describe('useIpcEvents agent status snapshot integration', () => {
         },
         ui: {
           onOpenSettings: () => () => {},
+          onOpenFeatureTour: () => () => {},
           onToggleLeftSidebar: () => () => {},
           onToggleRightSidebar: () => () => {},
           onToggleWorktreePalette: () => () => {},
