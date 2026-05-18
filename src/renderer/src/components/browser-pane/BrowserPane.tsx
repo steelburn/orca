@@ -20,18 +20,25 @@ import {
   ArrowRight,
   CircleCheck,
   Copy,
+  CornerDownLeft,
   Crosshair,
   ExternalLink,
   Globe,
   Image,
   Loader2,
+  MessageCircleQuestionMark,
   MessageSquarePlus,
   OctagonX,
+  PencilLine,
   RefreshCw,
+  Send,
   SquareCode,
   Trash2
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
+import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group'
+import { QuickLaunchAgentMenuItems } from '@/components/tab-bar/QuickLaunchButton'
+import { focusTerminalTabSurface } from '@/lib/focus-terminal-tab-surface'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -41,13 +48,6 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue
-} from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { useAppStore } from '@/store'
@@ -165,6 +165,15 @@ type BrowserOverlayAnchor = {
   y: number
   below: boolean
 }
+
+const BROWSER_ANNOTATION_INTENT_OPTIONS = [
+  { value: 'change', label: 'Change', icon: PencilLine },
+  { value: 'question', label: 'Question', icon: MessageCircleQuestionMark }
+] as const
+
+// Why: priority remains in the persisted annotation shape for backwards
+// compatibility, but the annotation UI no longer exposes urgency choices.
+const DEFAULT_BROWSER_ANNOTATION_PRIORITY: BrowserAnnotationPriority = 'important'
 
 type BrowserOverlayViewport = {
   scrollX: number
@@ -303,17 +312,13 @@ function PendingBrowserAnnotationCard({
   payload: BrowserGrabPayload
   anchor: BrowserOverlayAnchor
   portalContainer: HTMLElement | null
-  onAdd: (
-    comment: string,
-    intent: BrowserAnnotationIntent,
-    priority: BrowserAnnotationPriority
-  ) => void
+  onAdd: (comment: string, intent: BrowserAnnotationIntent) => void
   onCancel: () => void
 }): React.JSX.Element {
   const [comment, setComment] = useState('')
   const [intent, setIntent] = useState<BrowserAnnotationIntent>('change')
-  const [priority, setPriority] = useState<BrowserAnnotationPriority>('important')
   const trimmed = comment.trim()
+  const isMac = navigator.userAgent.includes('Mac')
 
   return (
     <Popover
@@ -370,59 +375,56 @@ function PendingBrowserAnnotationCard({
               event.preventDefault()
               event.stopPropagation()
               onCancel()
+              return
+            }
+            const hasSubmitModifier = isMac
+              ? event.metaKey && !event.ctrlKey
+              : event.ctrlKey && !event.metaKey
+            if (
+              event.key === 'Enter' &&
+              hasSubmitModifier &&
+              !event.altKey &&
+              !event.shiftKey &&
+              !event.nativeEvent.isComposing
+            ) {
+              event.preventDefault()
+              event.stopPropagation()
+              if (trimmed) {
+                onAdd(trimmed, intent)
+              }
             }
           }}
         />
-        <div className="mt-2 grid grid-cols-2 gap-2">
-          <div className="min-w-0">
-            <Label className="mb-1 block text-xs text-muted-foreground">Intent</Label>
-            <Select
-              value={intent}
-              onValueChange={(value) => setIntent(value as BrowserAnnotationIntent)}
-            >
-              <SelectTrigger
-                size="sm"
-                className="h-8 w-full text-xs"
-                aria-label="Annotation intent"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent
-                position="popper"
-                portalContainer={portalContainer}
-                collisionBoundary={portalContainer ?? undefined}
-              >
-                <SelectItem value="change">Change</SelectItem>
-                <SelectItem value="fix">Fix</SelectItem>
-                <SelectItem value="question">Question</SelectItem>
-                <SelectItem value="approve">Approve</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
-          <div className="min-w-0">
-            <Label className="mb-1 block text-xs text-muted-foreground">Priority</Label>
-            <Select
-              value={priority}
-              onValueChange={(value) => setPriority(value as BrowserAnnotationPriority)}
-            >
-              <SelectTrigger
-                size="sm"
-                className="h-8 w-full text-xs"
-                aria-label="Annotation priority"
-              >
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent
-                position="popper"
-                portalContainer={portalContainer}
-                collisionBoundary={portalContainer ?? undefined}
-              >
-                <SelectItem value="important">Important</SelectItem>
-                <SelectItem value="blocking">Blocking</SelectItem>
-                <SelectItem value="suggestion">Suggestion</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+        <div className="mt-2 min-w-0">
+          <Label className="mb-1 block text-xs text-muted-foreground">Intent</Label>
+          <ToggleGroup
+            type="single"
+            size="sm"
+            variant="outline"
+            value={intent}
+            onValueChange={(value) => {
+              if (value) {
+                setIntent(value as BrowserAnnotationIntent)
+              }
+            }}
+            className="h-8 w-full [&_[data-slot=toggle-group-item]]:h-8 [&_[data-slot=toggle-group-item]]:flex-1 [&_[data-slot=toggle-group-item]]:px-2"
+            aria-label="Annotation intent"
+          >
+            {BROWSER_ANNOTATION_INTENT_OPTIONS.map((option) => {
+              const Icon = option.icon
+              return (
+                <ToggleGroupItem
+                  key={option.value}
+                  value={option.value}
+                  aria-label={option.label}
+                  className="gap-1.5 text-xs data-[state=on]:border-foreground/20 data-[state=on]:bg-foreground/10 data-[state=on]:text-foreground data-[state=on]:shadow-xs data-[state=on]:hover:bg-foreground/15 data-[state=on]:hover:text-foreground"
+                >
+                  <Icon className="size-3.5" />
+                  <span>{option.label}</span>
+                </ToggleGroupItem>
+              )
+            })}
+          </ToggleGroup>
         </div>
         <div className="mt-3 flex justify-end gap-2">
           <Button size="sm" variant="ghost" className="h-8" onClick={onCancel}>
@@ -432,10 +434,14 @@ function PendingBrowserAnnotationCard({
             size="sm"
             className="h-8 gap-1.5"
             disabled={!trimmed}
-            onClick={() => onAdd(trimmed, intent, priority)}
+            onClick={() => onAdd(trimmed, intent)}
           >
             <MessageSquarePlus className="size-3.5" />
             Add
+            <span className="ml-1 inline-flex items-center gap-0.5 rounded border border-white/20 px-1.5 py-0.5 text-[10px] font-medium leading-none text-current/80">
+              <span>{isMac ? '⌘' : 'Ctrl'}</span>
+              <CornerDownLeft className="size-3" />
+            </span>
           </Button>
         </div>
       </PopoverContent>
@@ -2576,10 +2582,15 @@ function BrowserPagePane({
   const browserAnnotations = useAppStore(
     (s) => s.browserAnnotationsByPageId[browserTab.id] ?? EMPTY_BROWSER_ANNOTATIONS
   )
+  const activeGroupId = useAppStore((s) => s.activeGroupIdByWorktree[worktreeId])
   const browserAnnotationsRef = useRef(browserAnnotations)
   browserAnnotationsRef.current = browserAnnotations
   const [browserAnnotationTrayOpen, setBrowserAnnotationTrayOpen] = useState(true)
   const [browserAnnotationsCopied, setBrowserAnnotationsCopied] = useState(false)
+  const browserAnnotationsPrompt = useMemo(
+    () => formatBrowserAnnotationsAsMarkdown(browserAnnotations),
+    [browserAnnotations]
+  )
   const addBrowserPageAnnotation = useAppStore((s) => s.addBrowserPageAnnotation)
   const deleteBrowserPageAnnotation = useAppStore((s) => s.deleteBrowserPageAnnotation)
   const clearBrowserPageAnnotations = useAppStore((s) => s.clearBrowserPageAnnotations)
@@ -3910,11 +3921,7 @@ function BrowserPagePane({
   }, [grab, showGrabToast])
 
   const handleAddBrowserAnnotation = useCallback(
-    (
-      comment: string,
-      intent: BrowserAnnotationIntent,
-      priority: BrowserAnnotationPriority
-    ): void => {
+    (comment: string, intent: BrowserAnnotationIntent): void => {
       const payload = pendingAnnotationPayload
       if (!payload) {
         return
@@ -3924,7 +3931,7 @@ function BrowserPagePane({
         browserPageId: browserTab.id,
         comment,
         intent,
-        priority,
+        priority: DEFAULT_BROWSER_ANNOTATION_PRIORITY,
         createdAt: new Date().toISOString(),
         payload: createBrowserAnnotationPayload(payload)
       })
@@ -3944,21 +3951,14 @@ function BrowserPagePane({
   }, [grab, grabIntent])
 
   const handleCopyBrowserAnnotations = useCallback((): void => {
-    const markdown = formatBrowserAnnotationsAsMarkdown(browserAnnotations)
-    if (!markdown) {
+    if (!browserAnnotationsPrompt) {
       return
     }
-    void window.api.ui.writeClipboardText(markdown)
+    void window.api.ui.writeClipboardText(browserAnnotationsPrompt)
     clearTimeout(annotationCopyTimerRef.current)
     setBrowserAnnotationsCopied(true)
     annotationCopyTimerRef.current = setTimeout(() => setBrowserAnnotationsCopied(false), 1400)
-  }, [browserAnnotations])
-
-  const handleClearBrowserAnnotations = useCallback((): void => {
-    clearTimeout(annotationCopyTimerRef.current)
-    setBrowserAnnotationsCopied(false)
-    clearBrowserPageAnnotations(browserTab.id)
-  }, [browserTab.id, clearBrowserPageAnnotations])
+  }, [browserAnnotationsPrompt])
 
   const navigateToUrl = useCallback(
     (url: string): void => {
@@ -4517,6 +4517,31 @@ function BrowserPagePane({
           </span>
           {grabIntent === 'annotate' && browserAnnotations.length > 0 ? (
             <>
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="xs" variant="outline" className="h-6 gap-1.5">
+                        <Send className="size-3" />
+                        Send
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={6}>
+                    Send feedback to a new agent
+                  </TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="end" className="min-w-[180px]">
+                  <QuickLaunchAgentMenuItems
+                    worktreeId={worktreeId}
+                    groupId={activeGroupId ?? worktreeId}
+                    onFocusTerminal={focusTerminalTabSurface}
+                    prompt={browserAnnotationsPrompt}
+                    promptDelivery="draft"
+                    launchSource="notes_send"
+                  />
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 size="xs"
                 variant="outline"
@@ -4529,15 +4554,6 @@ function BrowserPagePane({
                   <Copy className="size-3" />
                 )}
                 {browserAnnotationsCopied ? 'Copied' : 'Copy All'}
-              </Button>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className="h-6 w-6"
-                onClick={handleClearBrowserAnnotations}
-                aria-label="Clear browser annotations"
-              >
-                <Trash2 className="size-3" />
               </Button>
             </>
           ) : null}
@@ -4671,6 +4687,31 @@ function BrowserPagePane({
               <div className="min-w-0 flex-1 text-sm font-medium">
                 {browserAnnotations.length} annotation{browserAnnotations.length === 1 ? '' : 's'}
               </div>
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <Button size="xs" variant="outline" className="gap-1.5">
+                        <Send className="size-3" />
+                        Send
+                      </Button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" sideOffset={6}>
+                    Send feedback to a new agent
+                  </TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="end" className="min-w-[180px]">
+                  <QuickLaunchAgentMenuItems
+                    worktreeId={worktreeId}
+                    groupId={activeGroupId ?? worktreeId}
+                    onFocusTerminal={focusTerminalTabSurface}
+                    prompt={browserAnnotationsPrompt}
+                    promptDelivery="draft"
+                    launchSource="notes_send"
+                  />
+                </DropdownMenuContent>
+              </DropdownMenu>
               <Button
                 size="xs"
                 variant="outline"
@@ -4683,15 +4724,6 @@ function BrowserPagePane({
                   <Copy className="size-3" />
                 )}
                 {browserAnnotationsCopied ? 'Copied' : 'Copy'}
-              </Button>
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                className="h-6 w-6 text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                onClick={handleClearBrowserAnnotations}
-                aria-label="Clear browser annotations"
-              >
-                <Trash2 className="size-3" />
               </Button>
             </div>
             <div className="scrollbar-sleek min-h-0 flex-1 overflow-auto p-1.5">
@@ -4712,10 +4744,8 @@ function BrowserPagePane({
                     <div className="mt-0.5 line-clamp-2 text-muted-foreground">
                       {annotation.comment}
                     </div>
-                    <div className="mt-1 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <div className="mt-1 text-[11px] text-muted-foreground">
                       <span>{annotation.intent}</span>
-                      <span>-</span>
-                      <span>{annotation.priority}</span>
                     </div>
                   </div>
                   <Button
