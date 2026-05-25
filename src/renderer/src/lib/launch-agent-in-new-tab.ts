@@ -97,8 +97,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
       cmdOverrides,
       platform: CLIENT_PLATFORM,
       allowEmptyPromptLaunch: true,
-      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks,
-      useOrcaCodexAgentStatusProfile: useOrcaAgentStatusHooks
+      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks
     })
     pasteDraftAfterLaunch = trimmedPrompt
     submitPastedPrompt = true
@@ -109,8 +108,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
       draft: trimmedPrompt,
       cmdOverrides,
       platform: CLIENT_PLATFORM,
-      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks,
-      useOrcaCodexAgentStatusProfile: useOrcaAgentStatusHooks
+      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks
     })
     if (draftLaunchPlan) {
       startupPlan = {
@@ -127,8 +125,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
         cmdOverrides,
         platform: CLIENT_PLATFORM,
         allowEmptyPromptLaunch: true,
-        useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks,
-        useOrcaCodexAgentStatusProfile: useOrcaAgentStatusHooks
+        useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks
       })
       pasteDraftAfterLaunch = trimmedPrompt
     }
@@ -139,8 +136,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
       cmdOverrides,
       platform: CLIENT_PLATFORM,
       allowEmptyPromptLaunch: true,
-      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks,
-      useOrcaCodexAgentStatusProfile: useOrcaAgentStatusHooks
+      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks
     })
     pasteDraftAfterLaunch = trimmedPrompt
   } else {
@@ -150,8 +146,7 @@ export function launchAgentInNewTab(args: LaunchAgentInNewTabArgs): LaunchAgentI
       cmdOverrides,
       platform: CLIENT_PLATFORM,
       allowEmptyPromptLaunch: !hasPrompt,
-      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks,
-      useOrcaCodexAgentStatusProfile: useOrcaAgentStatusHooks
+      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks
     })
   }
 

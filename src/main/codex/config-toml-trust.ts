@@ -5,6 +5,7 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
+  realpathSync,
   unlinkSync,
   writeFileSync
 } from 'fs'
@@ -101,7 +102,18 @@ export function computeTrustedHash(entry: CodexTrustEntry): string {
 }
 
 export function computeTrustKey(entry: CodexTrustEntry): string {
-  return `${entry.sourcePath}:${entry.eventLabel}:${entry.groupIndex}:${entry.handlerIndex}`
+  return `${getCodexCanonicalTrustPath(entry.sourcePath)}:${entry.eventLabel}:${entry.groupIndex}:${entry.handlerIndex}`
+}
+
+export function getCodexCanonicalTrustPath(sourcePath: string): string {
+  try {
+    // Why: Codex canonicalizes trust paths before building config keys. On
+    // macOS, /var is a symlink to /private/var; trusting the raw path still
+    // leaves the TUI in review/trust prompts.
+    return realpathSync.native(sourcePath)
+  } catch {
+    return sourcePath
+  }
 }
 
 export function parseTrustKey(key: string): {
@@ -232,13 +244,14 @@ export function upsertProjectTrustLevelInContent(
 ): string {
   const existing =
     existingContent.charCodeAt(0) === 0xfeff ? existingContent.slice(1) : existingContent
-  const headerPattern = buildProjectHeaderPattern(projectPath)
+  const trustedProjectPath = getCodexCanonicalTrustPath(projectPath)
+  const headerPattern = buildProjectHeaderPattern(trustedProjectPath)
   const match = headerPattern.exec(existing)
   const eol = existing.includes('\r\n') ? '\r\n' : '\n'
   const trustLine = `trust_level = "${trustLevel}"`
 
   if (!match) {
-    const block = [`[projects."${escapeTomlString(projectPath)}"]`, trustLine].join(eol)
+    const block = [`[projects."${escapeTomlString(trustedProjectPath)}"]`, trustLine].join(eol)
     if (existing.length === 0) {
       return `${block}${eol}`
     }

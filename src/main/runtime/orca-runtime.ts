@@ -6731,8 +6731,7 @@ export class OrcaRuntimeService {
       draft: content,
       cmdOverrides: settings.agentCmdOverrides ?? {},
       platform: agentLaunchPlatform,
-      useOrcaClaudeAgentStatusSettings: settings.agentStatusHooksEnabled !== false,
-      useOrcaCodexAgentStatusProfile: settings.agentStatusHooksEnabled !== false
+      useOrcaClaudeAgentStatusSettings: settings.agentStatusHooksEnabled !== false
     })
     if (draftLaunchPlan) {
       return {
@@ -6750,8 +6749,7 @@ export class OrcaRuntimeService {
       cmdOverrides: settings.agentCmdOverrides ?? {},
       platform: agentLaunchPlatform,
       allowEmptyPromptLaunch: true,
-      useOrcaClaudeAgentStatusSettings: settings.agentStatusHooksEnabled !== false,
-      useOrcaCodexAgentStatusProfile: settings.agentStatusHooksEnabled !== false
+      useOrcaClaudeAgentStatusSettings: settings.agentStatusHooksEnabled !== false
     })
     if (!startupPlan) {
       return null

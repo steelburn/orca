@@ -1,6 +1,5 @@
 import { isShellProcess } from './agent-detection'
 import { appendOrcaClaudeAgentStatusSettings } from './claude-settings'
-import { appendOrcaCodexAgentStatusProfile } from './codex-profile'
 import { TUI_AGENT_CONFIG } from './tui-agent-config'
 import type { TuiAgent } from './types'
 
@@ -51,7 +50,6 @@ function resolveBaseCommand(args: {
   cmdOverrides: Partial<Record<TuiAgent, string>>
   shell: AgentStartupShell
   useOrcaClaudeAgentStatusSettings?: boolean
-  useOrcaCodexAgentStatusProfile?: boolean
 }): string {
   const override = args.cmdOverrides[args.agent]
   if (override) {
@@ -61,9 +59,9 @@ function resolveBaseCommand(args: {
   if (args.agent === 'claude' && args.useOrcaClaudeAgentStatusSettings) {
     return appendOrcaClaudeAgentStatusSettings(command, args.shell)
   }
-  return args.agent === 'codex' && args.useOrcaCodexAgentStatusProfile
-    ? appendOrcaCodexAgentStatusProfile(command)
-    : command
+  // Why: Codex status hooks live in Orca's runtime CODEX_HOME; adding
+  // --profile-v2 makes Codex load a second hook representation and warn.
+  return command
 }
 
 export function buildAgentStartupPlan(args: {
@@ -74,7 +72,6 @@ export function buildAgentStartupPlan(args: {
   shell?: AgentStartupShell
   allowEmptyPromptLaunch?: boolean
   useOrcaClaudeAgentStatusSettings?: boolean
-  useOrcaCodexAgentStatusProfile?: boolean
 }): AgentStartupPlan | null {
   const { agent, prompt, cmdOverrides, platform, allowEmptyPromptLaunch = false } = args
   const shell = resolveStartupShell(platform, args.shell)
@@ -84,8 +81,7 @@ export function buildAgentStartupPlan(args: {
     agent,
     cmdOverrides,
     shell,
-    useOrcaClaudeAgentStatusSettings: args.useOrcaClaudeAgentStatusSettings,
-    useOrcaCodexAgentStatusProfile: args.useOrcaCodexAgentStatusProfile
+    useOrcaClaudeAgentStatusSettings: args.useOrcaClaudeAgentStatusSettings
   })
 
   if (!trimmedPrompt) {
@@ -160,7 +156,6 @@ export function buildAgentDraftLaunchPlan(args: {
   platform: NodeJS.Platform
   shell?: AgentStartupShell
   useOrcaClaudeAgentStatusSettings?: boolean
-  useOrcaCodexAgentStatusProfile?: boolean
 }): AgentDraftLaunchPlan | null {
   const { agent, draft, cmdOverrides, platform } = args
   const shell = resolveStartupShell(platform, args.shell)
@@ -173,8 +168,7 @@ export function buildAgentDraftLaunchPlan(args: {
     agent,
     cmdOverrides,
     shell,
-    useOrcaClaudeAgentStatusSettings: args.useOrcaClaudeAgentStatusSettings,
-    useOrcaCodexAgentStatusProfile: args.useOrcaCodexAgentStatusProfile
+    useOrcaClaudeAgentStatusSettings: args.useOrcaClaudeAgentStatusSettings
   })
   if (config.draftPromptFlag) {
     const quoted = quoteStartupArg(trimmed, shell)

@@ -77,8 +77,7 @@ export async function launchAgentBackgroundSession(
       cmdOverrides,
       platform: CLIENT_PLATFORM,
       allowEmptyPromptLaunch: true,
-      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks,
-      useOrcaCodexAgentStatusProfile: useOrcaAgentStatusHooks
+      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks
     })
     pasteDraftAfterLaunch = trimmedPrompt
   } else {
@@ -88,8 +87,7 @@ export async function launchAgentBackgroundSession(
       cmdOverrides,
       platform: CLIENT_PLATFORM,
       allowEmptyPromptLaunch: !hasPrompt,
-      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks,
-      useOrcaCodexAgentStatusProfile: useOrcaAgentStatusHooks
+      useOrcaClaudeAgentStatusSettings: useOrcaAgentStatusHooks
     })
   }
   if (!startupPlan) {

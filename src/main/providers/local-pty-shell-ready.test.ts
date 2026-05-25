@@ -290,7 +290,7 @@ describePosix('local PTY shell-ready launch config', () => {
     expect(zshenv).toContain('*/shell-ready/zsh) export ORCA_ORIG_ZDOTDIR="$HOME" ;;')
   })
 
-  it('writes wrappers that restore OpenCode and Pi config after user startup files', async () => {
+  it('writes wrappers that restore agent config homes after user startup files', async () => {
     const { getBashShellReadyRcfileContent, getShellReadyLaunchConfig } =
       await importFreshLocalPtyShellReady()
 
@@ -303,12 +303,17 @@ describePosix('local PTY shell-ready launch config', () => {
       '[[ -n "${ORCA_OPENCODE_CONFIG_DIR:-}" ]] && export OPENCODE_CONFIG_DIR="${ORCA_OPENCODE_CONFIG_DIR}"'
     const piRestoreLine =
       '[[ -n "${ORCA_PI_CODING_AGENT_DIR:-}" ]] && export PI_CODING_AGENT_DIR="${ORCA_PI_CODING_AGENT_DIR}"'
+    const codexRestoreLine =
+      '[[ -n "${ORCA_CODEX_HOME:-}" ]] && export CODEX_HOME="${ORCA_CODEX_HOME}"'
     expect(zshrc).toContain(restoreLine)
     expect(zlogin).toContain(restoreLine)
     expect(bashRc).toContain(restoreLine)
     expect(zshrc).toContain(piRestoreLine)
     expect(zlogin).toContain(piRestoreLine)
     expect(bashRc).toContain(piRestoreLine)
+    expect(zshrc).toContain(codexRestoreLine)
+    expect(zlogin).toContain(codexRestoreLine)
+    expect(bashRc).toContain(codexRestoreLine)
   })
 
   // Why: regression guard for issue #2422. Without OSC 133 C/D markers in the

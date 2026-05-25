@@ -31,7 +31,6 @@ import {
   unregisterSshFilesystemProvider
 } from '../providers/ssh-filesystem-dispatch'
 import { registerSshGitProvider, unregisterSshGitProvider } from '../providers/ssh-git-dispatch'
-import { appendOrcaCodexAgentStatusProfile } from '../../shared/codex-profile'
 import { DEFAULT_REPO_BADGE_COLOR } from '../../shared/constants'
 import { advertisedUrlWatcher } from '../ports/advertised-url-watcher'
 
@@ -6923,7 +6922,7 @@ describe('OrcaRuntimeService', () => {
       1,
       expect.objectContaining({
         cwd: '/tmp/workspaces/runtime-startup-setup-split',
-        command: appendOrcaCodexAgentStatusProfile('codex'),
+        command: 'codex',
         worktreeId: result.worktree.id
       })
     )
@@ -7026,7 +7025,7 @@ describe('OrcaRuntimeService', () => {
     expect(spawn).toHaveBeenCalledWith(
       expect.objectContaining({
         cwd: '/tmp/workspaces/runtime-explicit-draft',
-        command: appendOrcaCodexAgentStatusProfile('codex'),
+        command: 'codex',
         worktreeId: result.worktree.id
       })
     )
@@ -7298,7 +7297,7 @@ describe('OrcaRuntimeService', () => {
       expect(spawn).toHaveBeenCalledWith(
         expect.objectContaining({
           cwd: '/remote/mobile-codex-draft',
-          command: appendOrcaCodexAgentStatusProfile('codex'),
+          command: 'codex',
           connectionId: 'ssh-1',
           worktreeId: result.worktree.id
         })

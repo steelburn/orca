@@ -98,8 +98,6 @@ function buildCreatedAgentReopenStartup(worktree: Worktree):
     platform: CLIENT_PLATFORM,
     allowEmptyPromptLaunch: true,
     useOrcaClaudeAgentStatusSettings:
-      useAppStore.getState().settings?.agentStatusHooksEnabled !== false,
-    useOrcaCodexAgentStatusProfile:
       useAppStore.getState().settings?.agentStatusHooksEnabled !== false
   })
   if (!startupPlan) {

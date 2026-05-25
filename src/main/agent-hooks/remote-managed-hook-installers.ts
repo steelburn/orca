@@ -15,7 +15,7 @@ type RemoteManagedHookInstaller = readonly [
 
 const REMOTE_MANAGED_HOOK_INSTALLERS: readonly RemoteManagedHookInstaller[] = [
   ['claude', (sftp, remoteHome) => claudeHookService.installRemote(sftp, remoteHome)],
-  ['codex', (sftp, remoteHome) => codexHookService.installRemoteProfile(sftp, remoteHome)],
+  ['codex', (sftp, remoteHome) => codexHookService.installRemote(sftp, remoteHome)],
   ['gemini', (sftp, remoteHome) => geminiHookService.installRemote(sftp, remoteHome)],
   ['antigravity', (sftp, remoteHome) => antigravityHookService.installRemote(sftp, remoteHome)],
   ['cursor', (sftp, remoteHome) => cursorHookService.installRemote(sftp, remoteHome)],

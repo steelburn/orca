@@ -195,6 +195,7 @@ describe('registerPtyHandlers', () => {
   const savedPiAgentDir = process.env.PI_CODING_AGENT_DIR
   const savedOrcaPiAgentDir = process.env.ORCA_PI_CODING_AGENT_DIR
   const savedOrcaPiSourceAgentDir = process.env.ORCA_PI_SOURCE_AGENT_DIR
+  const savedOrcaCodexHome = process.env.ORCA_CODEX_HOME
   const savedOrcaClaudeSettings = process.env.ORCA_CLAUDE_AGENT_STATUS_SETTINGS
 
   beforeEach(() => {
@@ -206,6 +207,7 @@ describe('registerPtyHandlers', () => {
     delete process.env.PI_CODING_AGENT_DIR
     delete process.env.ORCA_PI_SOURCE_AGENT_DIR
     delete process.env.ORCA_PI_CODING_AGENT_DIR
+    delete process.env.ORCA_CODEX_HOME
     handlers.clear()
     handleMock.mockReset()
     onMock.mockReset()
@@ -311,6 +313,11 @@ describe('registerPtyHandlers', () => {
       delete process.env.ORCA_PI_SOURCE_AGENT_DIR
     } else {
       process.env.ORCA_PI_SOURCE_AGENT_DIR = savedOrcaPiSourceAgentDir
+    }
+    if (savedOrcaCodexHome === undefined) {
+      delete process.env.ORCA_CODEX_HOME
+    } else {
+      process.env.ORCA_CODEX_HOME = savedOrcaCodexHome
     }
     if (savedOrcaClaudeSettings === undefined) {
       delete process.env.ORCA_CLAUDE_AGENT_STATUS_SETTINGS
@@ -489,6 +496,7 @@ describe('registerPtyHandlers', () => {
     it('injects the selected Codex home into Orca terminal PTYs', async () => {
       const env = await spawnAndGetEnv(undefined, undefined, () => '/tmp/orca-codex-home')
       expect(env.CODEX_HOME).toBe('/tmp/orca-codex-home')
+      expect(env.ORCA_CODEX_HOME).toBe('/tmp/orca-codex-home')
     })
 
     it('injects the OpenCode hook env into Orca terminal PTYs', async () => {
@@ -745,13 +753,14 @@ describe('registerPtyHandlers', () => {
       expect(env.PATH).toContain('/tmp/orca-user-data/orca-terminal-attribution/posix')
     })
 
-    it('leaves ambient CODEX_HOME untouched when system default is selected', async () => {
+    it('overrides ambient CODEX_HOME with the Orca-managed home for system default', async () => {
       const env = await spawnAndGetEnv(
         undefined,
         { CODEX_HOME: '/tmp/system-codex-home' },
-        () => null
+        () => '/tmp/orca-codex-home'
       )
-      expect(env.CODEX_HOME).toBe('/tmp/system-codex-home')
+      expect(env.CODEX_HOME).toBe('/tmp/orca-codex-home')
+      expect(env.ORCA_CODEX_HOME).toBe('/tmp/orca-codex-home')
     })
 
     describe('daemon-active provider (parity with LocalPtyProvider)', () => {
@@ -783,12 +792,18 @@ describe('registerPtyHandlers', () => {
         return daemonSpawn
       }
 
-      async function daemonSpawnAndGetEnv(
+      type DaemonSpawnCall = {
+        env: Record<string, string>
+        envToDelete?: string[]
+      }
+
+      async function daemonSpawnAndGetOptions(
         argsEnv?: Record<string, string>,
         getSelectedCodexHomePath?: () => string | null,
         getSettings?: () => { enableGitHubAttribution: boolean },
-        processEnvOverrides?: Record<string, string | undefined>
-      ): Promise<Record<string, string>> {
+        processEnvOverrides?: Record<string, string | undefined>,
+        spawnArgs?: { cwd?: string; shellOverride?: string }
+      ): Promise<DaemonSpawnCall> {
         const daemonSpawn = setupDaemonAdapter()
         const savedEnv: Record<string, string | undefined> = {}
         if (processEnvOverrides) {
@@ -812,9 +827,10 @@ describe('registerPtyHandlers', () => {
           await handlers.get('pty:spawn')!(null, {
             cols: 80,
             rows: 24,
+            ...spawnArgs,
             ...(argsEnv ? { env: argsEnv } : {})
           })
-          return daemonSpawn.mock.calls.at(-1)![0].env
+          return daemonSpawn.mock.calls.at(-1)![0] as DaemonSpawnCall
         } finally {
           for (const [k, v] of Object.entries(savedEnv)) {
             if (v === undefined) {
@@ -824,6 +840,24 @@ describe('registerPtyHandlers', () => {
             }
           }
         }
+      }
+
+      async function daemonSpawnAndGetEnv(
+        argsEnv?: Record<string, string>,
+        getSelectedCodexHomePath?: () => string | null,
+        getSettings?: () => { enableGitHubAttribution: boolean },
+        processEnvOverrides?: Record<string, string | undefined>,
+        spawnArgs?: { cwd?: string; shellOverride?: string }
+      ): Promise<Record<string, string>> {
+        return (
+          await daemonSpawnAndGetOptions(
+            argsEnv,
+            getSelectedCodexHomePath,
+            getSettings,
+            processEnvOverrides,
+            spawnArgs
+          )
+        ).env
       }
 
       it('injects OpenCode plugin env (OPENCODE_CONFIG_DIR) on the daemon path', async () => {
@@ -876,6 +910,68 @@ describe('registerPtyHandlers', () => {
       it('injects the selected Codex home on the daemon path', async () => {
         const env = await daemonSpawnAndGetEnv({}, () => '/tmp/orca-codex-home')
         expect(env.CODEX_HOME).toBe('/tmp/orca-codex-home')
+        expect(env.ORCA_CODEX_HOME).toBe('/tmp/orca-codex-home')
+      })
+
+      it('skips host Codex home when a daemon-backed Windows spawn targets a WSL cwd', async () => {
+        const originalPlatform = process.platform
+        Object.defineProperty(process, 'platform', {
+          configurable: true,
+          value: 'win32'
+        })
+        try {
+          const spawnOptions = await daemonSpawnAndGetOptions(
+            {},
+            () => 'C:\\Users\\test\\AppData\\Roaming\\Orca\\codex-runtime-home\\home',
+            undefined,
+            {
+              CODEX_HOME: 'C:\\Users\\test\\AppData\\Roaming\\Orca\\codex-runtime-home\\home',
+              ORCA_CODEX_HOME: 'C:\\Users\\test\\AppData\\Roaming\\Orca\\codex-runtime-home\\home'
+            },
+            { cwd: '\\\\wsl.localhost\\Ubuntu\\home\\test\\repo' }
+          )
+          const { env } = spawnOptions
+          expect(env.CODEX_HOME).toBeUndefined()
+          expect(env.ORCA_CODEX_HOME).toBeUndefined()
+          expect(spawnOptions.envToDelete).toEqual(
+            expect.arrayContaining(['CODEX_HOME', 'ORCA_CODEX_HOME'])
+          )
+        } finally {
+          Object.defineProperty(process, 'platform', {
+            configurable: true,
+            value: originalPlatform
+          })
+        }
+      })
+
+      it('skips host Codex home when a daemon-backed Windows spawn uses a WSL shell override', async () => {
+        const originalPlatform = process.platform
+        Object.defineProperty(process, 'platform', {
+          configurable: true,
+          value: 'win32'
+        })
+        try {
+          const spawnOptions = await daemonSpawnAndGetOptions(
+            {},
+            () => 'C:\\Users\\test\\AppData\\Roaming\\Orca\\codex-runtime-home\\home',
+            undefined,
+            {
+              CODEX_HOME: 'C:\\Users\\test\\.codex',
+              ORCA_CODEX_HOME: 'C:\\Users\\test\\AppData\\Roaming\\Orca\\codex-runtime-home\\home'
+            },
+            { shellOverride: 'wsl.exe' }
+          )
+          expect(spawnOptions.env.CODEX_HOME).toBeUndefined()
+          expect(spawnOptions.env.ORCA_CODEX_HOME).toBeUndefined()
+          expect(spawnOptions.envToDelete).toEqual(
+            expect.arrayContaining(['CODEX_HOME', 'ORCA_CODEX_HOME'])
+          )
+        } finally {
+          Object.defineProperty(process, 'platform', {
+            configurable: true,
+            value: originalPlatform
+          })
+        }
       })
 
       it('injects the agent-hook receiver env on the daemon path', async () => {
@@ -2279,7 +2375,7 @@ describe('registerPtyHandlers', () => {
       registerPtyHandlers(
         mainWindow as never,
         undefined,
-        undefined,
+        () => 'C:\\Users\\test\\AppData\\Roaming\\Orca\\codex-runtime-home\\home',
         () =>
           ({
             terminalWindowsShell: 'wsl.exe',
@@ -2288,7 +2384,10 @@ describe('registerPtyHandlers', () => {
       )
       handlers.get('pty:spawn')!(null, { cols: 80, rows: 24 })
 
+      const spawnOptions = spawnMock.mock.calls.at(-1)?.[2] as { env: Record<string, string> }
       expect(spawnMock).toHaveBeenCalledWith('wsl.exe', expect.any(Array), expect.any(Object))
+      expect(spawnOptions.env.CODEX_HOME).toBeUndefined()
+      expect(spawnOptions.env.ORCA_CODEX_HOME).toBeUndefined()
     })
 
     it('keeps shellOverride priority for one-off tabs', () => {
@@ -2298,7 +2397,7 @@ describe('registerPtyHandlers', () => {
       registerPtyHandlers(
         mainWindow as never,
         undefined,
-        undefined,
+        () => 'C:\\Users\\test\\AppData\\Roaming\\Orca\\codex-runtime-home\\home',
         () =>
           ({
             terminalWindowsShell: 'powershell.exe',
@@ -2311,7 +2410,10 @@ describe('registerPtyHandlers', () => {
         shellOverride: 'wsl.exe'
       })
 
+      const spawnOptions = spawnMock.mock.calls.at(-1)?.[2] as { env: Record<string, string> }
       expect(spawnMock).toHaveBeenCalledWith('wsl.exe', expect.any(Array), expect.any(Object))
+      expect(spawnOptions.env.CODEX_HOME).toBeUndefined()
+      expect(spawnOptions.env.ORCA_CODEX_HOME).toBeUndefined()
     })
   })
 

@@ -36,16 +36,29 @@ describe('tui agent startup plans', () => {
     expect(plan?.launchCommand).toBe('claude "fix ^"quoted^" ^& ^%PATH^%"')
   })
 
-  it('launches Codex with the Orca profile when agent status hooks are enabled', () => {
+  it('does not launch Codex with the Orca profile when agent status hooks are enabled', () => {
+    const plan = buildAgentStartupPlan({
+      agent: 'codex',
+      prompt: 'fix it',
+      cmdOverrides: {},
+      platform: 'linux'
+    })
+
+    expect(plan?.launchCommand).toBe("codex 'fix it'")
+  })
+
+  it('does not inject Codex profile flags through the shared agent-status option', () => {
     const plan = buildAgentStartupPlan({
       agent: 'codex',
       prompt: 'fix it',
       cmdOverrides: {},
       platform: 'linux',
-      useOrcaCodexAgentStatusProfile: true
+      useOrcaClaudeAgentStatusSettings: true
     })
 
-    expect(plan?.launchCommand).toBe("codex --profile-v2 orca-agent-status 'fix it'")
+    expect(plan?.launchCommand).toBe("codex 'fix it'")
+    expect(plan?.launchCommand).not.toContain('--profile')
+    expect(plan?.launchCommand).not.toContain('orca-agent-status')
   })
 
   it('launches Claude with the Orca settings file when agent status hooks are enabled', () => {
@@ -102,8 +115,7 @@ describe('tui agent startup plans', () => {
       agent: 'codex',
       prompt: 'fix it',
       cmdOverrides: { codex: 'codex --profile work' },
-      platform: 'linux',
-      useOrcaCodexAgentStatusProfile: true
+      platform: 'linux'
     })
 
     expect(plan?.launchCommand).toBe("codex --profile work 'fix it'")

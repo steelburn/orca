@@ -193,54 +193,6 @@ describe('remote hook service installers', () => {
     expect(toml).toContain('trusted_hash = "sha256:')
   })
 
-  it('installs remote Codex profile hooks and sweeps legacy global entries', async () => {
-    const { sftp, fs } = createFakeSftp({
-      '/home/dev/.codex/hooks.json': JSON.stringify({
-        hooks: {
-          PreToolUse: [
-            {
-              hooks: [
-                {
-                  type: 'command',
-                  command:
-                    'if [ -x /home/dev/.orca/agent-hooks/codex-hook.sh ]; then /bin/sh /home/dev/.orca/agent-hooks/codex-hook.sh; fi'
-                }
-              ]
-            }
-          ]
-        }
-      })
-    })
-
-    const status = await new CodexHookService().installRemoteProfile(sftp, '/home/dev/')
-
-    expect(status.state).toBe('installed')
-    expect(status.configPath).toBe('/home/dev/.codex/orca-agent-status.config.toml')
-    const profile = fs.files.get('/home/dev/.codex/orca-agent-status.config.toml')!
-    expect(profile).toContain('[[hooks.PermissionRequest]]')
-    expect(profile).toContain(
-      '/home/dev/.codex/orca-agent-status.config.toml:permission_request:0:0'
-    )
-    expect(profile).toContain('/home/dev/.orca/agent-hooks/codex-hook.sh')
-    expect(fs.files.get('/home/dev/.orca/agent-hooks/codex-hook.sh')).toContain('#!/bin/sh')
-    const globalHooks = JSON.parse(fs.files.get('/home/dev/.codex/hooks.json')!) as {
-      hooks?: Record<string, unknown>
-    }
-    expect(globalHooks.hooks?.PreToolUse).toBeUndefined()
-  })
-
-  it('does not create remote legacy Codex hooks.json when profile install has nothing to sweep', async () => {
-    const { sftp, fs } = createFakeSftp()
-
-    const status = await new CodexHookService().installRemoteProfile(sftp, '/home/dev/')
-
-    expect(status.state).toBe('installed')
-    expect(fs.files.get('/home/dev/.codex/orca-agent-status.config.toml')).toContain(
-      '[[hooks.PermissionRequest]]'
-    )
-    expect(fs.files.has('/home/dev/.codex/hooks.json')).toBe(false)
-  })
-
   it('reports Codex trust-write failures without rolling back installed hooks', async () => {
     const { sftp, fs } = createFakeSftp()
     fs.failRenameTo.add('/home/dev/.codex/config.toml')

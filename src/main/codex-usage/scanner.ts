@@ -1,11 +1,11 @@
 /* eslint-disable max-lines -- Why: Codex discovery, incremental parsing, attribution, and aggregation all depend on the same event-normalization rules. Keeping them together makes the duplicate-snapshot logic easier to audit when usage totals look wrong. */
-import { homedir } from 'os'
 import { basename, join, win32, posix } from 'path'
 import { createReadStream } from 'fs'
 import { realpath, readdir, stat } from 'fs/promises'
 import { createInterface } from 'readline'
 import type { Repo } from '../../shared/types'
 import { areWorktreePathsEqual } from '../ipc/worktree-logic'
+import { getOrcaManagedCodexHomePath, getSystemCodexHomePath } from '../codex/codex-home-paths'
 import type {
   CodexUsageAttributedEvent,
   CodexUsageDailyAggregate,
@@ -51,7 +51,6 @@ type CodexUsageDeltaResolution =
   | { kind: 'event'; delta: CodexUsageRawUsage; nextTotals: CodexUsageRawUsage | null }
   | { kind: 'baseline'; nextTotals: CodexUsageRawUsage }
 
-const DEFAULT_CODEX_SESSIONS_DIR = join(homedir(), '.codex', 'sessions')
 const YIELD_EVERY_FILES = 10
 
 function ensureNumber(value: unknown): number {
@@ -108,19 +107,30 @@ async function walkJsonlFiles(dirPath: string): Promise<string[]> {
 }
 
 export function getCodexSessionsDirectory(): string {
-  const codexHome = process.env.CODEX_HOME?.trim()
-  if (codexHome) {
-    return join(codexHome, 'sessions')
-  }
-  return DEFAULT_CODEX_SESSIONS_DIR
+  // Why: Orca-launched Codex processes receive an Orca-owned CODEX_HOME, so
+  // callers that need the primary runtime path should not consult ambient
+  // shell CODEX_HOME.
+  return join(getOrcaManagedCodexHomePath(), 'sessions')
+}
+
+export function getCodexSessionDirectories(): string[] {
+  // Why: upgraded users still have ordinary Codex history under ~/.codex, while
+  // new Orca-launched sessions are written under Orca's managed runtime home.
+  return [getCodexSessionsDirectory(), join(getSystemCodexHomePath(), 'sessions')].filter(
+    (dirPath, index, allDirPaths) => allDirPaths.indexOf(dirPath) === index
+  )
 }
 
 export async function listCodexSessionFiles(): Promise<string[]> {
-  try {
-    return (await walkJsonlFiles(getCodexSessionsDirectory())).sort()
-  } catch {
-    return []
+  const files: string[] = []
+  for (const dirPath of getCodexSessionDirectories()) {
+    try {
+      files.push(...(await walkJsonlFiles(dirPath)))
+    } catch {
+      // Missing or unreadable history in one home should not hide the other.
+    }
   }
+  return [...new Set(files)].sort()
 }
 
 export async function getProcessedFileInfo(filePath: string): Promise<CodexUsageProcessedFile> {
