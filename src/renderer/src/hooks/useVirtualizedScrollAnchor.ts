@@ -7,6 +7,7 @@ import {
   type RefObject
 } from 'react'
 import type { Virtualizer } from '@tanstack/react-virtual'
+import { shouldCancelVirtualizedScrollOffsetRestore } from './virtualizedScrollOffsetRestore'
 
 export type VirtualizedScrollAnchor = {
   fallbackKeys?: readonly string[]
@@ -15,13 +16,6 @@ export type VirtualizedScrollAnchor = {
 } | null
 export const VIRTUALIZED_SCROLL_ANCHOR_RECORD_EVENT = 'orca-record-virtualized-scroll-anchor'
 const RECORD_ANCHOR_SCROLL_IDLE_DELAY_MS = 150
-
-export function shouldCancelVirtualizedScrollOffsetRestore(args: {
-  hasDirectScrollInput?: () => boolean
-  restoring: boolean
-}): boolean {
-  return args.restoring && args.hasDirectScrollInput?.() === true
-}
 
 type UseVirtualizedScrollAnchorOptions<
   TRow,

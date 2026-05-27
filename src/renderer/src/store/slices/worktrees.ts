@@ -3,6 +3,7 @@ import type { StateCreator } from 'zustand'
 import type { AppState } from '../types'
 import type {
   DetectedWorktreeListResult,
+  LocalBaseRefRefreshResult,
   Worktree,
   WorkspaceVisibleTabType,
   GitPushTarget,
@@ -26,12 +27,39 @@ import {
 import { getHostedReviewCacheKey } from './hosted-review'
 import { getGitHubPRCacheKey, getLegacyGitHubPRCacheKey } from './github-cache-key'
 import { moveFocusToRendererBeforeFocusedWebviewHidden } from './browser-webview-cleanup'
+import { toast } from 'sonner'
 import { requestVirtualizedScrollAnchorRecord } from '@/hooks/requestVirtualizedScrollAnchorRecord'
 export type { WorktreeSlice, WorktreeDeleteState } from './worktree-helpers'
 
 // Why: old runtime servers only have `worktree.list`; preserve the large-list
 // UI hydration parity this slice used before `worktree.detectedList` existed.
 const REMOTE_WORKTREE_LIST_PARITY_LIMIT = 10_000
+
+function showLocalBaseRefRefreshToast(result: LocalBaseRefRefreshResult | undefined): void {
+  if (!result || result.status === 'updated') {
+    return
+  }
+
+  let reason: string
+  switch (result.status) {
+    case 'skipped_dirty_worktree':
+      reason =
+        'the worktree where it is checked out has uncommitted changes. Commit, stash, or discard those changes, then try again.'
+      break
+    case 'skipped_not_fast_forward':
+      reason =
+        'the local branch does not exist or cannot be fast-forwarded cleanly from the remote base. Check for local-only commits before updating it manually.'
+      break
+    case 'skipped_error':
+      reason =
+        'Git returned an error while updating the local ref. Check the repo for locked refs or unusual worktree state, then try again.'
+      break
+  }
+
+  toast.warning(`Local ${result.localBranch} was not refreshed`, {
+    description: `Workspace created from ${result.baseRef}, but Orca could not fast-forward local ${result.localBranch} because ${reason}`
+  })
+}
 
 function arraysShallowEqual(a: string[] | undefined, b: string[] | undefined): boolean {
   if (a === b) {
@@ -945,6 +973,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
               sortEpoch: s.sortEpoch + 1
             }
           })
+          showLocalBaseRefRefreshToast(result.localBaseRefRefresh)
           return result
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
