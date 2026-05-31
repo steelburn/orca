@@ -8,6 +8,7 @@ import type {
   LocalBaseRefRefreshResult,
   Repo,
   ForceDeleteWorktreeBranchResult,
+  GitHubPrStartPoint,
   Worktree,
   WorkspaceVisibleTabType,
   GitPushTarget,
@@ -580,9 +581,12 @@ async function resolveLinkedPrPushTarget(
     const result =
       target.kind === 'local'
         ? await window.api.worktrees.resolvePrBase({ repoId, prNumber })
-        : await callRuntimeRpc<
-            { baseBranch: string; pushTarget?: GitPushTarget } | { error: string }
-          >(target, 'worktree.resolvePrBase', { repo: repoId, prNumber }, { timeoutMs: 30_000 })
+        : await callRuntimeRpc<GitHubPrStartPoint | { error: string }>(
+            target,
+            'worktree.resolvePrBase',
+            { repo: repoId, prNumber },
+            { timeoutMs: 30_000 }
+          )
     if ('error' in result) {
       console.warn(`Failed to resolve push target for PR #${prNumber}: ${result.error}`)
       return undefined
@@ -1030,15 +1034,18 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
     ]
     const nextCandidateName = (current: string, attempt: number): string =>
       attempt === 0 ? current : `${current}-${attempt + 1}`
-    const nextCandidateBranchName = (
-      current: string | undefined,
-      attempt: number
-    ): string | undefined => (current ? nextCandidateName(current, attempt) : undefined)
+    const isBranchNameOverrideConflict = (error: Error): boolean =>
+      Boolean(
+        branchNameOverride &&
+        (/^Branch ".+" already exists\./i.test(error.message) ||
+          /already exists locally/i.test(error.message) ||
+          /already exists on a remote/i.test(error.message) ||
+          /already has pr #\d+/i.test(error.message))
+      )
 
     try {
       for (let attempt = 0; attempt < 25; attempt += 1) {
         const candidateName = nextCandidateName(name, attempt)
-        const candidateBranchNameOverride = nextCandidateBranchName(branchNameOverride, attempt)
         try {
           // Why: Manual sort is user-authored order. Stamp new workspaces
           // deliberately at the top instead of relying on sortOrder fallback.
@@ -1047,9 +1054,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
             repoId,
             name: candidateName,
             baseBranch,
-            ...(candidateBranchNameOverride
-              ? { branchNameOverride: candidateBranchNameOverride }
-              : {}),
+            ...(branchNameOverride ? { branchNameOverride } : {}),
             setupDecision,
             sparseCheckout,
             ...(displayName ? { displayName } : {}),
@@ -1075,9 +1080,7 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
                     repo: repoId,
                     name: candidateName,
                     baseBranch,
-                    ...(candidateBranchNameOverride
-                      ? { branchNameOverride: candidateBranchNameOverride }
-                      : {}),
+                    ...(branchNameOverride ? { branchNameOverride } : {}),
                     setupDecision,
                     sparseCheckout,
                     ...(displayName ? { displayName } : {}),
@@ -1131,6 +1134,9 @@ export const createWorktreeSlice: StateCreator<AppState, [], [], WorktreeSlice> 
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error)
           const shouldRetry = retryableConflictPatterns.some((pattern) => pattern.test(message))
+          if (error instanceof Error && isBranchNameOverrideConflict(error)) {
+            throw error
+          }
           if (!shouldRetry || attempt === 24) {
             throw error
           }

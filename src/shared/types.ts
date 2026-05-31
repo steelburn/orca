@@ -275,6 +275,15 @@ export type GitPushTarget = {
   remoteCreated?: boolean
 }
 
+export type GitHubPrStartPoint = {
+  baseBranch: string
+  pushTarget?: GitPushTarget
+  /** Verified PR head commit. Present when checkout can be tied to a stable SHA. */
+  headSha?: string
+  /** Exact local branch name to create/reuse when the PR head is a safe same-repo branch. */
+  branchNameOverride?: string
+}
+
 // ─── Worktree metadata (persisted user-authored fields only) ─────────
 export type WorktreeMeta = {
   /** Immutable per-workspace-instance ID used to reject stale lineage after path reuse. */
