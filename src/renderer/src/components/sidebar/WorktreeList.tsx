@@ -301,6 +301,7 @@ const LINEAGE_INDENT = 18
 // Why: top-level worktrees are children of their project header; indent the
 // group one step so the status dots nest under the folder icon for hierarchy.
 const WORKTREE_GROUP_INDENT = 18
+const PROJECT_GROUP_HEADER_BASE_PADDING = 4
 const PROJECT_GROUP_HEADER_INDENT = 10
 const SIDEBAR_POINTER_DRAG_THRESHOLD_PX = 4
 
@@ -2427,7 +2428,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     // flush at the top. The swap fires when the header row
                     // reaches the top (see getActiveStickyHeaderIndexForScroll),
                     // so the previous repo no longer stays pinned over it.
-                    hasHeaderTopSpacing && !isActiveStickyHeader && 'pt-2',
+                    hasHeaderTopSpacing && !isActiveStickyHeader && 'pt-1',
                     isActiveStickyHeader ? 'sticky -top-px z-20 bg-sidebar' : 'absolute top-0'
                   )}
                   style={
@@ -2457,7 +2458,9 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                       row.repo && 'overflow-hidden'
                     )}
                     style={{
-                      paddingLeft: 12 + Math.min(projectGroupDepth, 6) * PROJECT_GROUP_HEADER_INDENT
+                      paddingLeft:
+                        PROJECT_GROUP_HEADER_BASE_PADDING +
+                        Math.min(projectGroupDepth, 6) * PROJECT_GROUP_HEADER_INDENT
                     }}
                     onDragOver={
                       isPinnedHeader
@@ -2768,8 +2771,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
               // Why: child cards render inside the parent card body, so their
               // first nested level starts flush with that inset.
               const paddingDepth = nested ? Math.max(0, itemRow.depth - 1) : itemRow.depth
-              // Why: ungrouped mode keeps workspace cards flush; grouped modes
-              // indent top-level cards under their visible section header.
+              // Why: grouped rows still indent their contents under the header,
+              // but the card surface spans the full sidebar hit/background row.
               const basePadding = !nested && groupBy !== 'none' ? WORKTREE_GROUP_INDENT : 0
               const paddingLeft = basePadding + paddingDepth * LINEAGE_INDENT
               const worktreeDragGroupKey = groupKeyByWorktreeId.get(itemRow.worktree.id)
@@ -2808,7 +2811,7 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     nested ? undefined : handleWorktreeRowPointerDown(event, itemRow.worktree.id)
                   }
                   style={{
-                    paddingLeft: paddingLeft > 0 ? `${paddingLeft}px` : undefined
+                    paddingLeft: nested && paddingLeft > 0 ? `${paddingLeft}px` : undefined
                   }}
                 >
                   <WorktreeCard
@@ -2824,6 +2827,8 @@ const VirtualizedWorktreeViewport = React.memo(function VirtualizedWorktreeViewp
                     revealHighlightTone={revealHighlightTone}
                     selectedWorktrees={selectedWorktrees}
                     nativeDragEnabled={false}
+                    contentIndent={nested ? 0 : paddingLeft}
+                    flushSurface={!nested}
                     onSelectionGesture={onSelectionGesture}
                     onContextMenuSelect={(event) => onContextMenuSelect(event, itemRow.worktree)}
                     onCardDragStart={handleWorktreeCardDragStart}

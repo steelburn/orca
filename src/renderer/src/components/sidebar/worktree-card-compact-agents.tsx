@@ -125,6 +125,12 @@ function summarizeAgents(agents: DashboardAgentRowData[], subjectLabel: string):
                 : 'idle'
     return `${count} ${label}`
   })
+  if (parts.length === 1) {
+    const onlyStatusLabel = parts[0].replace(/^\d+\s+/, '')
+    return agents.length === 1
+      ? `${subjectLabel} ${onlyStatusLabel}`
+      : `All ${subjectLabel} ${onlyStatusLabel}`
+  }
   return `${subjectLabel}: ${parts.join(', ')}`
 }
 
@@ -217,6 +223,7 @@ export function CompactAgentSummaryButton({
 }: CompactAgentSummaryButtonProps): React.JSX.Element {
   const summary = summarizeAgents(agents, subjectLabel)
   const iconAgents = selectSummaryIconAgents(agents, 3)
+  const hiddenIconAgentCount = Math.max(0, agents.length - iconAgents.length)
   const stopPointerPropagation = useCallback((e: React.SyntheticEvent) => {
     e.stopPropagation()
   }, [])
@@ -257,9 +264,11 @@ export function CompactAgentSummaryButton({
         ))}
       </span>
       <span className="min-w-0 flex-1 truncate">{summary}</span>
-      <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">
-        +{agents.length}
-      </span>
+      {hiddenIconAgentCount > 0 && (
+        <span className="shrink-0 text-[10px] tabular-nums text-muted-foreground/70">
+          +{hiddenIconAgentCount}
+        </span>
+      )}
       <ChevronRight
         className={cn('size-3 shrink-0 transition-transform duration-150', expanded && 'rotate-90')}
         aria-hidden

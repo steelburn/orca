@@ -4,7 +4,7 @@ import type { Row } from './worktree-list-groups'
 import { PINNED_GROUP_KEY } from './worktree-list-groups'
 
 export const GROUP_HEADER_ROW_HEIGHT = 28
-const SECONDARY_GROUP_HEADER_TOP_MARGIN = 8
+const SECONDARY_GROUP_HEADER_TOP_MARGIN = 4
 const IMPORTED_WORKTREES_LINE_ROW_HEIGHT = 36
 
 type WorktreeItemRow = Extract<Row, { type: 'item' }>

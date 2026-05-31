@@ -130,18 +130,18 @@ describe('WorktreeCard linked PR display', () => {
     workspacePortScan = null
   })
 
-  it('keeps an icon-only linked GH PR badge visible before hosted review details are cached', async () => {
+  it('keeps linked GH PR details off the closed card before hosted review details are cached', async () => {
     const { default: WorktreeCard } = await import('./WorktreeCard')
 
     const markup = renderWorktreeCardMarkup(
       <WorktreeCard worktree={makeWorktree({ linkedPR: 456 })} repo={makeRepo()} isActive={false} />
     )
 
-    expect(markup).toContain('Linked PR #456')
+    expect(markup).not.toContain('Linked PR #456')
     expect(markup).not.toContain('Loading PR')
   })
 
-  it('renders issue, Linear issue, PR, and notes as icon-only metadata in the closed card', async () => {
+  it('keeps issue, Linear issue, PR, and notes metadata out of the closed card', async () => {
     worktreeCardProperties = ['issue', 'linear-issue', 'pr', 'comment']
     const { default: WorktreeCard } = await import('./WorktreeCard')
 
@@ -158,15 +158,14 @@ describe('WorktreeCard linked PR display', () => {
       />
     )
 
-    expect(markup).toContain('Linked issue #123')
-    expect(markup).toContain('Linked Linear ENG-123')
-    expect(markup).toContain('Linked PR #456')
-    expect(markup).toContain('Workspace notes')
+    expect(markup).not.toContain('Linked issue #123')
+    expect(markup).not.toContain('Linked Linear ENG-123')
+    expect(markup).not.toContain('Linked PR #456')
+    expect(markup).not.toContain('Workspace notes')
     expect(markup).not.toContain('data-slot="badge"')
     expect(markup).not.toContain('Loading issue')
     expect(markup).not.toContain('Loading PR')
     expect(markup).not.toContain('Reviewer handoff note')
-    expect(markup.indexOf('Workspace notes')).toBeLessThan(markup.indexOf('Linked issue #123'))
   })
 
   it('hides individual metadata surfaces when their card properties are disabled', async () => {
@@ -230,7 +229,7 @@ describe('WorktreeCard linked PR display', () => {
     expect(markup).not.toContain('58941')
   })
 
-  it('does not render the standalone CI badge and colors a failing linked PR icon red', async () => {
+  it('does not render standalone CI or linked PR status icons on the closed card', async () => {
     worktreeCardProperties = ['pr', 'ci']
     hostedReviewCache = {
       'local::repo-1::feature/local-branch': {
@@ -244,8 +243,8 @@ describe('WorktreeCard linked PR display', () => {
       <WorktreeCard worktree={makeWorktree({ linkedPR: 456 })} repo={makeRepo()} isActive={false} />
     )
 
-    expect(markup).toContain('Linked PR #456')
-    expect(markup).toContain('text-rose-500/85')
+    expect(markup).not.toContain('Linked PR #456')
+    expect(markup).not.toContain('text-rose-500/85')
     expect(markup).not.toContain('CI checks')
   })
 })
