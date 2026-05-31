@@ -266,6 +266,16 @@ describe('areWorktreePathsEqual', () => {
   it('keeps POSIX path comparison case-sensitive', () => {
     expect(areWorktreePathsEqual('/tmp/Worktree', '/tmp/worktree', 'linux')).toBe(false)
   })
+
+  it('treats macOS /private/tmp git paths as matching /tmp workspace paths', () => {
+    expect(
+      areWorktreePathsEqual(
+        '/private/tmp/orca-proof/worktrees/repo/feature',
+        '/tmp/orca-proof/worktrees/repo/feature',
+        'darwin'
+      )
+    ).toBe(true)
+  })
 })
 
 describe('shouldSetDisplayName', () => {

@@ -190,8 +190,8 @@ export function areWorktreePathsEqual(
     // create spuriously fails until the next full reload repopulates state.
     return left.toLowerCase() === right.toLowerCase()
   }
-  const left = posix.normalize(posix.resolve(leftPath))
-  const right = posix.normalize(posix.resolve(rightPath))
+  const left = normalizePosixWorktreePathForComparison(leftPath, platform)
+  const right = normalizePosixWorktreePathForComparison(rightPath, platform)
   return left === right
 }
 
@@ -199,6 +199,20 @@ function looksLikeWindowsPath(pathValue: string): boolean {
   return (
     /^[A-Za-z]:[\\/]/.test(pathValue) || pathValue.startsWith('\\\\') || pathValue.startsWith('//')
   )
+}
+
+function normalizePosixWorktreePathForComparison(
+  pathValue: string,
+  platform: NodeJS.Platform
+): string {
+  const normalized = posix.normalize(posix.resolve(pathValue))
+  if (platform !== 'darwin') {
+    return normalized
+  }
+  if (normalized === '/private/tmp') {
+    return '/tmp'
+  }
+  return normalized.startsWith('/private/tmp/') ? normalized.slice('/private'.length) : normalized
 }
 
 function getRuntimePathOps(
