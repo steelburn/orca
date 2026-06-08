@@ -130,6 +130,7 @@ function createSettings(overrides: Partial<GlobalSettings> = {}): GlobalSettings
     experimentalTerminalAttention: false,
     experimentalCompactWorktreeCards: false,
     experimentalWorktreeSymlinks: false,
+    experimentalUnifiedNewTabLauncher: false,
     terminalWindowsShell: 'powershell.exe',
     terminalWindowsPowerShellImplementation: 'powershell.exe',
     enableGitHubAttribution: true,

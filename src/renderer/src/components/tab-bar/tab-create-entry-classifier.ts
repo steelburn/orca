@@ -226,9 +226,7 @@ export function getTabEntryOptions(
 ): TabEntryOption[] {
   const trimmed = query.trim()
   if (!trimmed) {
-    return [
-      { id: 'empty', classification: { kind: 'empty', message: 'Open any file, URL, agent, ...' } }
-    ]
+    return [{ id: 'empty', classification: { kind: 'empty', message: 'URL, file, or new file' } }]
   }
 
   const explicitUrl = classifyExplicitUrl(trimmed)

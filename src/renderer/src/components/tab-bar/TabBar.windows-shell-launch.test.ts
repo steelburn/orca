@@ -11,10 +11,6 @@ const appStoreSnapshot: {
   worktreesByRepo: Record<string, { id: string; repoId: string }[]>
   unifiedTabsByWorktree: Record<string, unknown[]>
   activeGroupIdByWorktree: Record<string, string>
-  detectedAgentIds: string[] | null
-  remoteDetectedAgentIds: Record<string, string[]>
-  isDetectingAgents: boolean
-  isDetectingRemoteAgents: Record<string, boolean>
 } = {
   activeTabId: null,
   activeTabType: null,
@@ -22,11 +18,7 @@ const appStoreSnapshot: {
   repos: [],
   worktreesByRepo: {},
   unifiedTabsByWorktree: {},
-  activeGroupIdByWorktree: {},
-  detectedAgentIds: null,
-  remoteDetectedAgentIds: {},
-  isDetectingAgents: false,
-  isDetectingRemoteAgents: {}
+  activeGroupIdByWorktree: {}
 }
 const pinTabMock: (tabId: string) => void = vi.fn()
 const unpinTabMock: (tabId: string) => void = vi.fn()
@@ -41,10 +33,6 @@ const useAppStoreMock = vi.fn(
       worktreesByRepo: Record<string, { id: string; repoId: string }[]>
       unifiedTabsByWorktree: Record<string, unknown[]>
       activeGroupIdByWorktree: Record<string, string>
-      detectedAgentIds: string[] | null
-      remoteDetectedAgentIds: Record<string, string[]>
-      isDetectingAgents: boolean
-      isDetectingRemoteAgents: Record<string, boolean>
       pinTab: typeof pinTabMock
       unpinTab: typeof unpinTabMock
       settings: {
@@ -62,10 +50,6 @@ const useAppStoreMock = vi.fn(
       worktreesByRepo: appStoreSnapshot.worktreesByRepo,
       unifiedTabsByWorktree: appStoreSnapshot.unifiedTabsByWorktree,
       activeGroupIdByWorktree: appStoreSnapshot.activeGroupIdByWorktree,
-      detectedAgentIds: appStoreSnapshot.detectedAgentIds,
-      remoteDetectedAgentIds: appStoreSnapshot.remoteDetectedAgentIds,
-      isDetectingAgents: appStoreSnapshot.isDetectingAgents,
-      isDetectingRemoteAgents: appStoreSnapshot.isDetectingRemoteAgents,
       pinTab: pinTabMock,
       unpinTab: unpinTabMock,
       settings: {
@@ -123,10 +107,6 @@ useAppStoreExport.getState = vi.fn(() => ({
   worktreesByRepo: appStoreSnapshot.worktreesByRepo,
   unifiedTabsByWorktree: appStoreSnapshot.unifiedTabsByWorktree,
   activeGroupIdByWorktree: appStoreSnapshot.activeGroupIdByWorktree,
-  detectedAgentIds: appStoreSnapshot.detectedAgentIds,
-  remoteDetectedAgentIds: appStoreSnapshot.remoteDetectedAgentIds,
-  isDetectingAgents: appStoreSnapshot.isDetectingAgents,
-  isDetectingRemoteAgents: appStoreSnapshot.isDetectingRemoteAgents,
   pinTab: pinTabMock,
   unpinTab: unpinTabMock,
   settings: {
