@@ -360,6 +360,9 @@ function parseSlugAndNumber(
 export type WorkItemsCacheSources = {
   issues: GitHubOwnerRepo | null
   prs: GitHubOwnerRepo | null
+  /** Raw origin remote (if any). Required-nullable so selector code can
+   *  distinguish the raw candidate from the effective PR source. */
+  originCandidate: GitHubOwnerRepo | null
   /** Raw upstream remote (if any) — present so the selector can render
    *  independently of the currently-effective preference. Required-nullable
    *  (matches siblings `issues`/`prs`) so consumers only branch on `null`
@@ -1918,6 +1921,7 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
     const requestState = get()
     const requestSettings = requestState.settings
     const requestRuntimeEnvironmentId = activeRuntimeEnvironmentId(requestSettings)
+    const requestInvalidationNonce = requestState.workItemsInvalidationNonce
     const requestContext = getGitHubWorkItemRequestContext(
       requestState,
       requestSettings,
@@ -1971,6 +1975,12 @@ export const createGitHubSlice: StateCreator<AppState, [], [], GitHubSlice> = (s
         // Why: runtime switches reset server-scoped caches; queued old-runtime
         // responses can still satisfy callers but must not revive reset entries.
         if (activeRuntimeEnvironmentId(get().settings) !== requestRuntimeEnvironmentId) {
+          return items
+        }
+        // Why: clearing in-flight entries lets the next fetch start, but the
+        // old promise can still settle. Do not let pre-flip source data
+        // repopulate the cache after the invalidation nonce changes.
+        if (get().workItemsInvalidationNonce !== requestInvalidationNonce) {
           return items
         }
         set((s) => ({

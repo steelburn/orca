@@ -1493,6 +1493,11 @@ export type ListWorkItemsResult<T> = {
   sources: {
     issues: GitHubOwnerRepo | null
     prs: GitHubOwnerRepo | null
+    /** Raw `origin` remote resolved for this repo, independent of the
+     *  user's preference. Required-nullable so the renderer can compare raw
+     *  remote candidates without inferring origin from the effective PR
+     *  source. */
+    originCandidate: GitHubOwnerRepo | null
     /** Raw `upstream` remote resolved for this repo, independent of the
      *  user's preference. Present so the renderer's issue-source selector
      *  can always decide whether to render (upstream exists & differs from
