@@ -1,6 +1,6 @@
 {
   "name": "orca",
-  "version": "1.4.60",
+  "version": "1.4.61-rc.1",
   "description": "Next-gen IDE for parallel agentic development",
   "homepage": "https://github.com/stablyai/orca",
   "author": "stablyai",
